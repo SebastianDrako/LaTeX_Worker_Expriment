@@ -21,10 +21,23 @@ This project is an experiment for building a **LaTeX worker** — a service or t
 LaTeX_Worker_Expriment/
 ├── LICENSE              # MIT License
 ├── CLAUDE.md            # This file
-└── daemon/              # Rust daemon (Axum + Tectonic)
-    ├── Cargo.toml
+├── daemon/              # Rust daemon (Axum + Tectonic)
+│   ├── Cargo.toml
+│   └── src/
+│       └── main.rs      # HTTP server + WebSocket + Tectonic driver + tests
+└── cloudflare/          # Cloudflare Worker (TypeScript + Wrangler)
+    ├── wrangler.toml    # Worker config: D1, R2, Durable Objects
+    ├── package.json
+    ├── tsconfig.json
+    ├── migrations/
+    │   └── 0001_initial.sql   # D1 schema (users, projects, files)
     └── src/
-        └── main.rs      # HTTP server + WebSocket + Tectonic driver + tests
+        ├── index.ts     # Router + auth middleware + all API routes
+        ├── auth.ts      # Cloudflare Access JWT validation (RS256 + JWKS)
+        ├── db.ts        # D1 CRUD helpers
+        ├── storage.ts   # R2 key helpers
+        └── do/
+            └── ProjectRoom.ts  # Durable Object: WebSocket broadcast per project
 ```
 
 ---
@@ -294,6 +307,7 @@ Construir el **core Rust** mínimo:
 ### Prerequisites
 
 - Rust toolchain (`rustup`): <https://rustup.rs/>
+- Node.js ≥ 18 + npm (for Cloudflare Worker)
 - Internet access on first run (Tectonic downloads the TeX bundle via HTTP Range Requests)
 
 ### Build & run
@@ -343,6 +357,57 @@ cargo test -- --nocapture
 
 > The `compile_invalid_latex_returns_json_error` test is network-agnostic: it passes whether Tectonic
 > can reach the bundle or not, because all error paths return the same JSON shape.
+
+### Cloudflare Worker — setup & dev
+
+```bash
+cd cloudflare
+npm install
+
+# First-time cloud resource creation (run once)
+npx wrangler d1 create latex-worker-db         # copy the database_id into wrangler.toml
+npx wrangler r2 bucket create latex-worker-files
+
+# Secrets (never commit values — set via Wrangler)
+npx wrangler secret put CF_ACCESS_TEAM_DOMAIN  # e.g. myteam.cloudflareaccess.com
+npx wrangler secret put CF_ACCESS_AUD          # Application Audience Tag from Access dashboard
+
+# Apply D1 migrations
+npm run db:migrate:local   # local dev DB
+npm run db:migrate:remote  # production DB
+
+# Local development (Worker + D1 + R2 emulated locally)
+npm run dev
+
+# Deploy to Cloudflare
+npm run deploy
+```
+
+#### Cloudflare Worker API
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/me` | Current user (creates on first login) |
+| `GET` | `/api/projects` | List user's projects |
+| `POST` | `/api/projects` | Create project (`{ name }`) |
+| `GET` | `/api/projects/:id` | Project detail + file list |
+| `DELETE` | `/api/projects/:id` | Delete project (owner only) |
+| `GET` | `/api/projects/:id/files` | List files |
+| `PUT` | `/api/projects/:id/files/:name` | Upload a source file |
+| `GET` | `/api/projects/:id/files/:name` | Download a source file |
+| `DELETE` | `/api/projects/:id/files/:name` | Delete a source file |
+| `PUT` | `/api/projects/:id/output.pdf` | Store compiled PDF (triggers WS broadcast) |
+| `GET` | `/api/projects/:id/output.pdf` | Get latest compiled PDF |
+| `GET` | `/api/projects/:id/ws` | WebSocket — receives `{"event":"pdf_updated"}` |
+
+All routes require `Cf-Access-Jwt-Assertion` header (injected automatically by Cloudflare Access).
+
+#### Environment variables (Worker)
+
+| Variable | Where to set | Description |
+|---|---|---|
+| `CF_ACCESS_TEAM_DOMAIN` | `wrangler secret put` | e.g. `myteam.cloudflareaccess.com` |
+| `CF_ACCESS_AUD` | `wrangler secret put` | Audience Tag from the Access application |
 
 ---
 

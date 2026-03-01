@@ -1,0 +1,29 @@
+name            = "latex-worker"
+main            = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# ── D1 database ───────────────────────────────────────────────────────────────
+[[d1_databases]]
+binding      = "DB"
+database_name = "latex-worker-db"
+database_id  = "REPLACE_WITH_D1_DATABASE_ID"   # wrangler d1 create latex-worker-db
+
+# ── R2 bucket ─────────────────────────────────────────────────────────────────
+[[r2_buckets]]
+binding     = "STORAGE"
+bucket_name = "latex-worker-files"              # wrangler r2 bucket create latex-worker-files
+
+# ── Durable Objects ───────────────────────────────────────────────────────────
+[durable_objects]
+bindings = [
+  { name = "PROJECT_ROOM", class_name = "ProjectRoom" }
+]
+
+[[migrations]]
+tag         = "v1"
+new_classes = ["ProjectRoom"]
+
+# ── Env vars (non-secret) ─────────────────────────────────────────────────────
+# Secrets (CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD) must be set via:
+#   wrangler secret put CF_ACCESS_TEAM_DOMAIN
+#   wrangler secret put CF_ACCESS_AUD
