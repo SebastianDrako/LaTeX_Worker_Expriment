@@ -1,12 +1,22 @@
 use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
+    },
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::broadcast;
+
+#[derive(Clone)]
+struct AppState {
+    tx: Arc<broadcast::Sender<()>>,
+}
 
 #[derive(Deserialize)]
 struct CompileRequest {
@@ -21,9 +31,12 @@ struct CompileError {
     log: String,
 }
 
-async fn compile(Json(req): Json<CompileRequest>) -> Response {
+async fn compile(State(state): State<AppState>, Json(req): Json<CompileRequest>) -> Response {
     match tokio::task::spawn_blocking(move || run_tectonic(req)).await {
-        Ok(Ok(pdf)) => (StatusCode::OK, [("content-type", "application/pdf")], pdf).into_response(),
+        Ok(Ok(pdf)) => {
+            let _ = state.tx.send(());
+            (StatusCode::OK, [("content-type", "application/pdf")], pdf).into_response()
+        }
         Ok(Err(log)) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(CompileError { error: "compilation_failed", log }),
@@ -34,6 +47,26 @@ async fn compile(Json(req): Json<CompileRequest>) -> Response {
             Json(CompileError { error: "internal_error", log: e.to_string() }),
         )
             .into_response(),
+    }
+}
+
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    ws.on_upgrade(move |socket| handle_socket(socket, state.tx.subscribe()))
+}
+
+async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<()>) {
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                if result.is_err() { break; }
+                if socket.send(Message::Text(r#"{"event":"pdf_updated"}"#.into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => {
+                if !matches!(msg, Some(Ok(_))) { break; }
+            }
+        }
     }
 }
 
@@ -105,7 +138,13 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(7878);
 
-    let app = Router::new().route("/compile", post(compile));
+    let (tx, _) = broadcast::channel::<()>(16);
+    let state = AppState { tx: Arc::new(tx) };
+
+    let app = Router::new()
+        .route("/compile", post(compile))
+        .route("/ws", get(ws_handler))
+        .with_state(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .unwrap();
