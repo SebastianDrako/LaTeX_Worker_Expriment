@@ -1,0 +1,22 @@
+{
+  "name": "latex-worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev":               "wrangler dev",
+    "deploy":            "wrangler deploy",
+    "types":             "wrangler types",
+    "check":             "tsc --noEmit",
+    "test":              "vitest run",
+    "test:watch":        "vitest",
+    "db:migrate:local":  "wrangler d1 migrations apply latex-worker-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply latex-worker-db --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5",
+    "@cloudflare/workers-types": "^4",
+    "typescript": "^5",
+    "vitest": "^2",
+    "wrangler": "^3"
+  }
+}
