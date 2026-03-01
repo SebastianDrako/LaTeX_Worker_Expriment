@@ -133,28 +133,26 @@ Después de evaluar varias opciones, se decidió el siguiente enfoque:
 - Tectonic se embebe como librería Rust, no como subprocess
 - Cero costo de infra para compilación, privacidad total
 
-**Framework de distribución: Tauri 2.0**
-- Envuelve el core Rust con una WebView
-- Un solo codebase para Windows, macOS, Linux y Android
-- En Android usa invoke() directo (no HTTP/puerto), manejado por Tauri
-- Evita el problema de Android matando procesos background
+**Distribución: binario Rust nativo**
+- `cargo build --release` genera un ejecutable para Windows/macOS/Linux
+- El usuario instala solo el daemon; la UI vive en el browser
+- Sin WebView empaquetada, sin Electron, sin Tauri
 
-### Stack técnico preliminar
+### Stack técnico
 
 ```
-Core Rust (daemon):
+Daemon Rust:
   tectonic = "0.14"       # motor LaTeX embebido
-  axum = "0.7"            # HTTP local (desktop)
+  axum = "0.7"            # HTTP local
   tokio                   # async runtime
   notify = "6"            # file watcher (live reload)
 
-Distribución:
-  Tauri 2.0               # wrapper multiplataforma
+Frontend:
+  Cloudflare Pages        # web app (React/Svelte/etc.)
 
 Cloud (opcional, para sync/share):
   Cloudflare D1           # metadata y proyectos
   Cloudflare R2           # almacenamiento .tex y .pdf
-  Cloudflare Pages        # frontend web
 ```
 
 ### Opciones descartadas y por qué
@@ -165,6 +163,7 @@ Cloud (opcional, para sync/share):
 | WASM en Cloudflare Worker | Límite de 128MB RAM, 30s CPU |
 | WASM en browser (SwiftLaTeX) | Proyecto poco mantenido |
 | WASM en browser (Tectonic) | Válido como fallback futuro, no como MVP |
+| Tauri 2.0 | Sobreingeniería — es solo una WebView; Rust ya es multiplataforma y el browser real es suficiente como UI |
 
 ### Próximo paso acordado
 
@@ -180,11 +179,8 @@ Construir el **core Rust** mínimo:
 _To be filled in once the tech stack is decided._
 
 ```bash
-# Core Rust daemon
+# Build daemon
 cargo build --release
-
-# Cross-compile para Android (via Tauri)
-# tauri android build
 
 # Run dev
 cargo run
