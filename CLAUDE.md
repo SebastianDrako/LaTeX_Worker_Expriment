@@ -25,19 +25,42 @@ LaTeX_Worker_Expriment/
 │   ├── Cargo.toml
 │   └── src/
 │       └── main.rs      # HTTP server + WebSocket + Tectonic driver + tests
-└── cloudflare/          # Cloudflare Worker (TypeScript + Wrangler)
-    ├── wrangler.toml    # Worker config: D1, R2, Durable Objects
+├── cloudflare/          # Cloudflare Worker (TypeScript + Wrangler)
+│   ├── wrangler.toml    # Worker config: D1, R2, Durable Objects
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── migrations/
+│   │   └── 0001_initial.sql   # D1 schema (users, projects, files)
+│   └── src/
+│       ├── index.ts     # Router + auth middleware + all API routes
+│       ├── auth.ts      # Cloudflare Access JWT validation (RS256 + JWKS)
+│       ├── db.ts        # D1 CRUD helpers
+│       ├── storage.ts   # R2 key helpers
+│       └── do/
+│           └── ProjectRoom.ts  # Durable Object: WebSocket relay (text + binary)
+└── frontend/            # React frontend (Vite + TypeScript)
+    ├── index.html
     ├── package.json
-    ├── tsconfig.json
-    ├── migrations/
-    │   └── 0001_initial.sql   # D1 schema (users, projects, files)
+    ├── vite.config.ts
     └── src/
-        ├── index.ts     # Router + auth middleware + all API routes
-        ├── auth.ts      # Cloudflare Access JWT validation (RS256 + JWKS)
-        ├── db.ts        # D1 CRUD helpers
-        ├── storage.ts   # R2 key helpers
-        └── do/
-            └── ProjectRoom.ts  # Durable Object: WebSocket broadcast per project
+        ├── main.tsx         # Entry point
+        ├── App.tsx          # Root: auth guard + project/editor routing
+        ├── types/index.ts   # Shared TypeScript interfaces
+        ├── api/client.ts    # Fetch wrapper for Worker API + WebSocket URL
+        ├── styles/app.css   # Global CSS (Overleaf-inspired design)
+        ├── hooks/
+        │   ├── useAuth.ts       # GET /api/me on mount
+        │   ├── useProject.ts    # Project + file state management
+        │   ├── useCompile.ts    # Daemon compile flow + PDF upload
+        │   └── usePdfReload.ts  # WebSocket listener for pdf_updated
+        └── components/
+            ├── ProjectList/     # Project selection + create/delete
+            └── Editor/
+                ├── index.tsx    # 3-panel layout (react-resizable-panels)
+                ├── Toolbar.tsx  # Compile button + status
+                ├── FileTree.tsx # File list + upload + delete
+                ├── CodeEditor.tsx  # CodeMirror 6 + LaTeX syntax + Yjs
+                └── PdfViewer.tsx   # PDF.js multi-page viewer
 ```
 
 ---
@@ -422,6 +445,70 @@ All routes require `Cf-Access-Jwt-Assertion` header (injected automatically by C
 |---|---|---|
 | `CF_ACCESS_TEAM_DOMAIN` | `wrangler secret put` | e.g. `myteam.cloudflareaccess.com` |
 | `CF_ACCESS_AUD` | `wrangler secret put` | Audience Tag from the Access application |
+
+### Frontend — setup & dev
+
+```bash
+cd frontend
+npm install
+
+# Copy and edit env vars
+cp .env.example .env
+
+# Local dev (requires wrangler dev running in another terminal for /api)
+npm run dev
+# → http://localhost:5173
+
+# Production build (output in dist/)
+npm run build
+```
+
+#### Environment variables (Frontend)
+
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_WORKER_URL` | `""` (same origin) | Base URL of the Cloudflare Worker. In dev: `http://localhost:8787` |
+| `VITE_DAEMON_URL` | `http://localhost:7878` | URL of the local Rust daemon |
+
+In production (Cloudflare Pages), both the frontend and Worker share the same domain so `VITE_WORKER_URL` can be left empty.
+
+#### Frontend tech stack
+
+| Library | Version | Purpose |
+|---|---|---|
+| React | 18 | UI framework |
+| Vite | 5 | Bundler + dev server |
+| CodeMirror 6 | 6 | LaTeX editor with custom syntax |
+| pdfjs-dist | 4 | Multi-page PDF renderer |
+| react-resizable-panels | 2 | Resizable 3-panel layout |
+| Yjs | 13 | CRDT for real-time collaboration |
+| y-codemirror.next | 0.3 | CodeMirror ↔ Yjs binding |
+| y-protocols | 1 | Awareness (cursor sharing) |
+
+#### Collaboration architecture
+
+The frontend uses Yjs for real-time collaborative editing:
+
+```
+[Browser A]  ←→  WebSocket  ←→  [Durable Object]  ←→  WebSocket  ←→  [Browser B]
+  Y.Doc                           (binary relay)                          Y.Doc
+```
+
+- Binary WebSocket messages = Yjs CRDT updates (document sync)
+- Text WebSocket messages = JSON notifications (`{"event":"pdf_updated"}`)
+- The Durable Object relays both types transparently
+- Late joiners load the base document from R2, then receive incremental Yjs updates
+
+#### Compilation flow
+
+```
+1. Frontend fetches all project files from R2 (via Worker API)
+2. POST { main, assets } → http://localhost:7878/compile (local daemon)
+3. Daemon compiles with Tectonic → returns PDF bytes (200) or { error, log } (422)
+4. Frontend PUT PDF bytes → Worker /api/projects/:id/output.pdf
+5. Worker broadcasts {"event":"pdf_updated"} to all WebSocket clients
+6. All PDF viewers reload
+```
 
 ---
 

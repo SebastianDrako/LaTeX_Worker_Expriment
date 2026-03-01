@@ -39,12 +39,13 @@ export class ProjectRoom implements DurableObject {
     server.addEventListener("close", () => this.sessions.delete(server));
     server.addEventListener("error", () => this.sessions.delete(server));
 
-    // Relay any message sent by a client to all other clients (presence/cursor sharing)
+    // Relay any message sent by a client to all other clients.
+    // Supports both text (JSON notifications) and binary (Yjs CRDT updates).
     server.addEventListener("message", (event) => {
       for (const other of this.sessions) {
         if (other !== server) {
           try {
-            other.send(event.data as string);
+            other.send(event.data as string | ArrayBuffer);
           } catch {
             this.sessions.delete(other);
           }
