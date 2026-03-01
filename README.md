@@ -1,0 +1,419 @@
+<div align="center">
+
+```
+██╗      █████╗ ████████╗███████╗██╗  ██╗    ██╗    ██╗ ██████╗ ██████╗ ██╗  ██╗███████╗██████╗
+██║     ██╔══██╗╚══██╔══╝██╔════╝╚██╗██╔╝    ██║    ██║██╔═══██╗██╔══██╗██║ ██╔╝██╔════╝██╔══██╗
+██║     ███████║   ██║   █████╗   ╚███╔╝     ██║ █╗ ██║██║   ██║██████╔╝█████╔╝ █████╗  ██████╔╝
+██║     ██╔══██║   ██║   ██╔══╝   ██╔██╗     ██║███╗██║██║   ██║██╔══██╗██╔═██╗ ██╔══╝  ██╔══██╗
+███████╗██║  ██║   ██║   ███████╗██╔╝ ██╗    ╚███╔███╔╝╚██████╔╝██║  ██║██║  ██╗███████╗██║  ██║
+╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝     ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+```
+
+**Self-hosted. Privacy-first. Permanently free.**
+
+*Your documents compile on your machine. They never touch anyone else's server.*
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)](https://rustup.rs/)
+[![Node](https://img.shields.io/badge/Node-18+-brightgreen.svg)](https://nodejs.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![Status](https://img.shields.io/badge/Status-Experiment-blueviolet.svg)]()
+
+</div>
+
+---
+
+## Why does this exist?
+
+### The Overleaf problem
+
+Overleaf is great until you check the pricing page. The **free tier** caps you at one collaborator, no version history, and compiles that time out on larger documents. The **premium plan** runs $21/month (or more for teams) — for a document editor.
+
+For students, researchers, and small teams that just need to write papers without worrying about hitting a paywall mid-deadline, that's not acceptable.
+
+### The cloud trust problem
+
+2025 and 2026 brought a wave of scrutiny over how US-based cloud AI and SaaS companies handle user data — especially in academic and government contexts. Contracts with intelligence agencies, training data clauses buried in ToS updates, subpoenas, and policy reversals made it clear: **if you don't control the infrastructure, you don't control your data.**
+
+LaTeX documents often contain unpublished research, thesis drafts, grant proposals, and proprietary content. Sending those bytes to a third-party cloud for compilation is a trust assumption most users never consciously make.
+
+**LaTeX Worker removes that assumption entirely.** Compilation runs on the user's own machine via a local Rust daemon. The cloud layer (Cloudflare) only stores metadata and files you explicitly upload — it never sees the compilation process.
+
+### The philosophy
+
+| | Overleaf | LaTeX Worker |
+|---|---|---|
+| Compilation | Their servers | **Your machine** |
+| Cost | $21/month+ | **$0** (Cloudflare free tier) |
+| Collaboration | Paid feature | **Included** (Durable Objects) |
+| Offline compile | No | **Yes** (daemon is local) |
+| Source code | Closed | **Open, MIT** |
+| Data sovereignty | Their ToS | **Yours** |
+
+---
+
+## Architecture
+
+LaTeX Worker is three independent components that compose cleanly:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          USER'S BROWSER                             │
+│                                                                     │
+│  ┌──────────────┐  ┌─────────────────────┐  ┌───────────────────┐  │
+│  │  File Tree   │  │  CodeMirror 6        │  │   PDF Viewer      │  │
+│  │  (R2 files)  │  │  LaTeX + Yjs sync    │  │   (PDF.js)        │  │
+│  └──────────────┘  └─────────────────────┘  └───────────────────┘  │
+│         │                    │  △                      △            │
+│         │ REST               │  │ Yjs CRDT             │ pdf_updated│
+└─────────┼────────────────────┼──┼──────────────────────┼────────────┘
+          │                    │  │                      │
+          ▼                    ▼  │                      │
+┌─────────────────────────────────────────────────────────────────────┐
+│                      CLOUDFLARE EDGE                                │
+│                                                                     │
+│  ┌──────────────────────────────────┐  ┌───────────────────────┐   │
+│  │        Worker (TypeScript)       │  │  Durable Object       │   │
+│  │  ┌──────┐ ┌──────┐ ┌─────────┐  │  │  ProjectRoom          │   │
+│  │  │ Auth │ │  D1  │ │   R2    │  │  │  - WebSocket relay    │   │
+│  │  │ JWT  │ │ meta │ │  files  │  │  │  - binary (Yjs)       │   │
+│  │  └──────┘ └──────┘ └─────────┘  │  │  - text (events)      │   │
+│  └──────────────────────────────────┘  └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+          │
+          │  POST /compile  { main: "...", assets: {...} }
+          ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    USER'S MACHINE (daemon)                           │
+│                                                                     │
+│   Rust + Axum + Tectonic (embedded, no subprocess)                  │
+│   localhost:7878                                                     │
+│                                                                     │
+│   POST /compile  →  Tectonic  →  PDF bytes  (or error log)          │
+│   GET  /ws       →  live-reload WebSocket                           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Compilation flow (step by step)
+
+```
+1. User clicks Compile (or presses Ctrl+Enter)
+2. Frontend fetches all project files from R2 via Worker API
+3. Frontend POSTs { main, assets } to http://localhost:7878/compile
+4. Tectonic compiles in-process (multi-pass + BibTeX, no temp disk files)
+5. On success → daemon returns PDF bytes
+6. Frontend PUTs the PDF to Worker → R2 (overwrites previous)
+7. Worker calls ProjectRoom.broadcast({ event: "pdf_updated" })
+8. All connected browsers reload their PDF viewer instantly
+```
+
+The document source **never leaves the user's machine** during steps 3–5. Only the final PDF is sent to Cloudflare.
+
+---
+
+## Modules
+
+### `daemon/` — Rust compilation engine
+
+The heart of the project. A lightweight Axum HTTP server that embeds [Tectonic](https://tectonic-typesetting.github.io/) as a Rust library.
+
+| File | Role |
+|---|---|
+| `src/main.rs` | HTTP server, `/compile` handler, `/ws` WebSocket, Tectonic driver |
+
+**Key design choices:**
+- Tectonic runs **in-process** (no `pdflatex` subprocess). Faster, no PATH issues, no temp file cleanup.
+- Tectonic handles multi-pass automatically (no `pdflatex → bibtex → pdflatex` dance).
+- TeX bundle downloaded via HTTP Range Requests on first use — subsequent compiles are instant.
+- Binary assets (images, PDFs) are sent as base64 in the JSON bundle; text files (`.tex`, `.bib`) as plain strings.
+
+**API contract:**
+
+```
+POST /compile
+Content-Type: application/json
+
+{
+  "main": "\\documentclass{article}\\begin{document}Hello\\end{document}",
+  "assets": {
+    "figure.png": "<base64>",
+    "refs.bib":   "% bib content..."
+  }
+}
+
+→ 200 OK + PDF bytes
+→ 422 { "error": "compilation_failed", "log": "..." }
+```
+
+---
+
+### `cloudflare/` — Edge API + storage
+
+A Cloudflare Worker that handles auth, metadata, file storage, and real-time coordination — all on the free tier.
+
+| Module | Role |
+|---|---|
+| `src/index.ts` | Router + auth middleware + all REST routes |
+| `src/auth.ts` | Cloudflare Access JWT validation (RS256 + JWKS) |
+| `src/db.ts` | D1 CRUD: users, projects, files |
+| `src/storage.ts` | R2 key layout helpers |
+| `src/do/ProjectRoom.ts` | Durable Object: WebSocket relay (Yjs binary + JSON events) |
+
+**Services used (all on Cloudflare free tier):**
+
+| Service | Purpose | Free limit |
+|---|---|---|
+| Workers | API runtime | 100k req/day |
+| D1 | SQLite metadata | 5M rows |
+| R2 | File & PDF storage | 10 GB |
+| Durable Objects | WebSocket relay | 1M req/month |
+| Access | SSO (Google/GitHub/Microsoft) | 50 users |
+
+**Auth model:** [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) sits in front of the Worker. It validates identity and injects a signed JWT into every request. No email flows, no OAuth boilerplate — just configure your SSO provider in the Access dashboard.
+
+---
+
+### `frontend/` — React editor
+
+An Overleaf-inspired browser editor. Deploys to Cloudflare Pages (static, zero cost).
+
+| Module | Role |
+|---|---|
+| `src/App.tsx` | Auth guard + state-based routing |
+| `src/api/client.ts` | Typed fetch wrapper for the Worker API |
+| `src/hooks/useCompile.ts` | Full compile flow: R2 fetch → daemon → R2 upload |
+| `src/hooks/usePdfReload.ts` | WebSocket listener for `pdf_updated` |
+| `src/components/Editor/CodeEditor.tsx` | CodeMirror 6 + custom LaTeX syntax + Yjs |
+| `src/components/Editor/PdfViewer.tsx` | PDF.js multi-page renderer |
+| `src/components/Editor/FileTree.tsx` | File list with upload + delete |
+
+**Editor tech:**
+- **CodeMirror 6** with a custom `StreamLanguage` for LaTeX — no fragile third-party grammar packages.
+- **Yjs** (CRDT) for conflict-free real-time collaboration. Updates flow as binary WebSocket messages through the Durable Object relay.
+- **PDF.js** renders every page as a `<canvas>`. Auto-reloads when the Durable Object broadcasts `pdf_updated`.
+
+---
+
+## Getting started
+
+### Prerequisites
+
+| Tool | Version | Install |
+|---|---|---|
+| Rust + Cargo | stable | [rustup.rs](https://rustup.rs/) |
+| Node.js | ≥ 18 | [nodejs.org](https://nodejs.org/) |
+| Wrangler CLI | ≥ 3 | `npm i -g wrangler` |
+
+### 1. Clone
+
+```bash
+git clone https://github.com/SebastianDrako/LaTeX_Worker_Expriment.git
+cd LaTeX_Worker_Expriment
+```
+
+### 2. Start the daemon
+
+```bash
+cd daemon
+cargo run          # first run downloads the TeX bundle (~500 MB, cached afterwards)
+# → Listening on http://localhost:7878
+```
+
+> **First run takes a few minutes** while Tectonic fetches the TeX Live bundle from the internet.
+> Subsequent starts are instant.
+
+### 3. Start the Cloudflare Worker (local)
+
+```bash
+cd cloudflare
+npm install
+npm run db:migrate:local       # create the local D1 database
+npm run dev
+# → Worker at http://localhost:8787
+```
+
+### 4. Start the frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env           # defaults are fine for local dev
+npm run dev
+# → http://localhost:5173
+```
+
+Open [http://localhost:5173](http://localhost:5173). Because Cloudflare Access is not active in local dev, you may need to mock the JWT or temporarily bypass auth — see [Local dev without Access](#local-dev-without-access) in the FAQ.
+
+---
+
+## Deploying to production
+
+### Step 1 — Cloudflare account setup (one-time)
+
+```bash
+# Log in
+npx wrangler login
+
+# Create the D1 database (copy the id into cloudflare/wrangler.toml → database_id)
+npx wrangler d1 create latex-worker-db
+
+# Create the R2 bucket
+npx wrangler r2 bucket create latex-worker-files
+```
+
+### Step 2 — Cloudflare Access (SSO)
+
+1. Go to **Zero Trust → Access → Applications** in the Cloudflare dashboard.
+2. Create a new **Self-hosted** application pointing at your Worker domain.
+3. Add identity providers: Google, GitHub, or Microsoft.
+4. Copy the **Application Audience Tag** (AUD).
+
+```bash
+npx wrangler secret put CF_ACCESS_TEAM_DOMAIN   # e.g. myteam.cloudflareaccess.com
+npx wrangler secret put CF_ACCESS_AUD           # the AUD tag from the Access dashboard
+```
+
+### Step 3 — Deploy the Worker
+
+```bash
+cd cloudflare
+npm run db:migrate:remote   # apply D1 schema to production
+npm run deploy
+# → https://latex-worker.<your-subdomain>.workers.dev
+```
+
+### Step 4 — Deploy the frontend (Cloudflare Pages)
+
+```bash
+cd frontend
+npm run build               # outputs to dist/
+
+# Option A: Wrangler
+npx wrangler pages deploy dist --project-name latex-worker-frontend
+
+# Option B: Connect your GitHub repo in the Cloudflare Pages dashboard
+# Build command: cd frontend && npm run build
+# Output directory: frontend/dist
+```
+
+Set the following environment variables in Pages settings:
+
+| Variable | Value |
+|---|---|
+| `VITE_WORKER_URL` | `""` (empty — same origin if Pages + Worker share a domain) |
+| `VITE_DAEMON_URL` | `http://localhost:7878` (always local) |
+
+### Step 5 — Share the daemon binary with your users
+
+The daemon must run on each user's machine. Build a release binary:
+
+```bash
+cd daemon
+cargo build --release
+# → daemon/target/release/latex-daemon
+```
+
+Distribute this binary alongside a one-line startup script. Users run it once; it stays alive in the background.
+
+> **Windows/macOS/Linux** — Rust compiles natively. No WebView, no Electron, no runtime dependency beyond the binary itself.
+
+---
+
+## FAQ
+
+### Do I need to pay for anything?
+
+No. The entire cloud stack runs within Cloudflare's **free tier**:
+- Workers: 100,000 requests/day free
+- D1: 5 million row reads/day free
+- R2: 10 GB storage, 1 million operations/month free
+- Durable Objects: 1 million requests/month free
+- Pages: unlimited static requests free
+- Access: up to 50 users free
+
+The daemon runs on the user's own hardware — zero server cost for compilation.
+
+### Does compilation require internet access?
+
+Only on the **first run**, when Tectonic downloads the TeX Live bundle (~500 MB). After that, the bundle is cached locally and compilation is fully offline.
+
+### Why a local daemon instead of compiling in the browser (WASM)?
+
+Two reasons:
+
+1. **Memory.** Cloudflare Workers cap at 128 MB RAM. A full TeX Live compilation easily exceeds that.
+2. **Maintenance.** Browser WASM builds of TeX (SwiftLaTeX, etc.) lag years behind upstream and require a maintained fork. Tectonic in native Rust is actively developed and just works.
+
+The tradeoff is that users install a small binary. Given that most LaTeX users already have TeX Live or MiKTeX installed, this is a familiar model — just a much smaller install.
+
+### Can multiple people edit the same document at the same time?
+
+Yes. The editor uses **Yjs** (a CRDT library) for conflict-free real-time collaboration. Changes from all editors are merged automatically — no "last write wins" conflicts. Cursor positions are shared via the awareness protocol.
+
+The Cloudflare Durable Object acts as a WebSocket relay: it forwards Yjs binary updates between all connected browsers without interpreting them.
+
+### What happens if two people compile at the same time?
+
+The last PDF wins. Both compilations run locally on each user's daemon. Whichever one finishes last and successfully uploads to R2 becomes the current output. In practice this is fine for document editing — compilations take seconds and the PDF viewer auto-reloads for everyone.
+
+### Is my LaTeX source sent to Cloudflare?
+
+Your source files are stored in **R2** (Cloudflare's object storage) when you upload them or auto-save. The compilation itself happens on your local machine — Cloudflare never sees the compilation process.
+
+If you want full air-gap privacy (no cloud storage at all), the daemon's `/compile` endpoint works standalone: you can POST to it directly from any client without the Cloudflare layer.
+
+### Local dev without Access
+
+Cloudflare Access injects the JWT automatically in production. In local dev (`wrangler dev`), you need to either:
+
+**Option A — bypass auth in the Worker (dev only):**
+
+Edit `cloudflare/src/index.ts` and replace the auth check with a hardcoded test user. Never commit this to main.
+
+**Option B — generate a test JWT:**
+
+```bash
+# Install step CLI (https://smallstep.com/cli/)
+step crypto jwt sign \
+  --key <your-private-key> \
+  --aud <your-aud> \
+  --sub test@example.com \
+  --exp +8h
+```
+
+Pass the token as the `Cf-Access-Jwt-Assertion` header.
+
+### Why is the repo name misspelled?
+
+`LaTeX_Worker_Expriment` — yes, "Expriment" is intentional. It's the canonical name. We preserve it.
+
+### Can I self-host the sync layer too (no Cloudflare)?
+
+The Worker and Durable Objects are designed to run on Cloudflare's infrastructure. However, the daemon is completely standalone and the architecture is simple enough to port:
+
+- Replace D1 with any SQLite-compatible DB
+- Replace R2 with any S3-compatible bucket
+- Replace Durable Objects with a simple Node.js WebSocket server using `y-websocket`
+- Replace Cloudflare Access with any JWT-based auth (Auth0, Keycloak, etc.)
+
+PRs welcome.
+
+---
+
+## Contributing
+
+This is an early-stage experiment. The best contributions right now are:
+
+- **Bug reports** — open an issue with a minimal reproduction
+- **Architecture feedback** — open a discussion
+- **PRs** — keep them focused and atomic; one change per PR
+
+Branch naming: `feature/<description>` or `fix/<description>`. PRs target `main`.
+
+---
+
+## License
+
+MIT © 2026 Sebastian Guerrero Casadiegos
+
+> *"Write once, compile anywhere."*
