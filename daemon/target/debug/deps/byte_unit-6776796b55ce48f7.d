@@ -1,0 +1,12 @@
+/home/user/LaTeX_Worker_Expriment/daemon/target/debug/deps/byte_unit-6776796b55ce48f7.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/u128/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/u128/constants.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/macros.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/adjusted_byte.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte_error.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte_unit.rs
+
+/home/user/LaTeX_Worker_Expriment/daemon/target/debug/deps/libbyte_unit-6776796b55ce48f7.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/u128/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/u128/constants.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/macros.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/adjusted_byte.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte_error.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte_unit.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/u128/mod.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/u128/constants.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/macros.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/adjusted_byte.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte_error.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/byte-unit-4.0.19/src/byte_unit.rs:

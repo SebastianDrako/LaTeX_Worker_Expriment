@@ -1,0 +1,11 @@
+/home/user/LaTeX_Worker_Expriment/daemon/target/debug/deps/tectonic_io_base-f28b70ad1df2618d.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/app_dirs.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/digest.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/filesystem.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/flate2.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/stack.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/stdstreams.rs
+
+/home/user/LaTeX_Worker_Expriment/daemon/target/debug/deps/libtectonic_io_base-f28b70ad1df2618d.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/app_dirs.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/digest.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/filesystem.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/flate2.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/stack.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/stdstreams.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/app_dirs.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/digest.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/filesystem.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/flate2.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/stack.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tectonic_io_base-0.4.3/src/stdstreams.rs:
