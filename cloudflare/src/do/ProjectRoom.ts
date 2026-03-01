@@ -3,15 +3,19 @@
  *
  * One instance per active project (keyed by project ID).
  *
+ * Uses the WebSocket Hibernation API so the DO sleeps between messages and
+ * is only billed for actual CPU time, not idle connection time.
+ *
  * Endpoints (internal Worker → DO):
- *   GET  /ws        — WebSocket upgrade; adds client to the broadcast set
- *   POST /broadcast — JSON body is forwarded to all connected clients
+ *   GET  /ws        — WebSocket upgrade
+ *   POST /broadcast — JSON body forwarded to all connected clients
+ *
+ * WebSocket message types relayed:
+ *   string      — JSON event notifications (e.g. { event: "pdf_updated" })
+ *   ArrayBuffer — Yjs CRDT binary updates (editor collaboration)
  */
 export class ProjectRoom implements DurableObject {
-  private readonly sessions = new Set<WebSocket>();
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_state: DurableObjectState) {}
+  constructor(private readonly state: DurableObjectState) {}
 
   async fetch(request: Request): Promise<Response> {
     const { pathname } = new URL(request.url);
@@ -33,38 +37,49 @@ export class ProjectRoom implements DurableObject {
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
-    server.accept();
 
-    this.sessions.add(server);
-    server.addEventListener("close", () => this.sessions.delete(server));
-    server.addEventListener("error", () => this.sessions.delete(server));
-
-    // Relay any message sent by a client to all other clients.
-    // Supports both text (JSON notifications) and binary (Yjs CRDT updates).
-    server.addEventListener("message", (event) => {
-      for (const other of this.sessions) {
-        if (other !== server) {
-          try {
-            other.send(event.data as string | ArrayBuffer);
-          } catch {
-            this.sessions.delete(other);
-          }
-        }
-      }
-    });
+    // Hibernation API: DO sleeps between messages instead of staying hot.
+    // - No event listeners or sessions Set needed; runtime manages both.
+    // - getWebSockets() returns live connections after each wakeup.
+    // - Connections survive eviction/hibernation transparently.
+    this.state.acceptWebSocket(server);
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
   private async handleBroadcast(request: Request): Promise<Response> {
     const msg = JSON.stringify(await request.json());
-    for (const ws of this.sessions) {
+    for (const ws of this.state.getWebSockets()) {
       try {
         ws.send(msg);
       } catch {
-        this.sessions.delete(ws);
+        // Socket already gone — runtime removes it from getWebSockets() automatically.
       }
     }
     return new Response(null, { status: 204 });
+  }
+
+  // ── Hibernation event handlers ────────────────────────────────────────────
+  // The runtime calls these methods after waking the DO for each WS event.
+  // No manual session tracking required.
+
+  webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+    for (const other of this.state.getWebSockets()) {
+      if (other !== ws) {
+        try {
+          other.send(message);
+        } catch {
+          // Already closed — no cleanup needed.
+        }
+      }
+    }
+  }
+
+  webSocketClose(): void {
+    // Runtime removes the socket from getWebSockets() automatically.
+  }
+
+  webSocketError(): void {
+    // Same — no manual cleanup required.
   }
 }
