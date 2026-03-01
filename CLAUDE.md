@@ -115,20 +115,79 @@ Once a programming language, framework, or build system is chosen, update this f
 
 ---
 
+## Architecture Decisions (session 2026-03-01)
+
+### Decisión: Stack de compilación LaTeX
+
+Después de evaluar varias opciones, se decidió el siguiente enfoque:
+
+**Motor de compilación: Tectonic**
+- Escrito en Rust, compila a WASM y targets nativos
+- Carga paquetes bajo demanda via HTTP Range Requests (compatible con R2)
+- Maneja multi-pass automáticamente
+- Alternativas descartadas: TeXLive.js (abandonado), SwiftLaTeX (C → Emscripten, poco mantenido)
+
+**Modo de ejecución: Daemon local (Rust nativo)**
+- El daemon corre en la máquina del usuario
+- El frontend (web) se comunica con él via `localhost`
+- Tectonic se embebe como librería Rust, no como subprocess
+- Cero costo de infra para compilación, privacidad total
+
+**Framework de distribución: Tauri 2.0**
+- Envuelve el core Rust con una WebView
+- Un solo codebase para Windows, macOS, Linux y Android
+- En Android usa invoke() directo (no HTTP/puerto), manejado por Tauri
+- Evita el problema de Android matando procesos background
+
+### Stack técnico preliminar
+
+```
+Core Rust (daemon):
+  tectonic = "0.14"       # motor LaTeX embebido
+  axum = "0.7"            # HTTP local (desktop)
+  tokio                   # async runtime
+  notify = "6"            # file watcher (live reload)
+
+Distribución:
+  Tauri 2.0               # wrapper multiplataforma
+
+Cloud (opcional, para sync/share):
+  Cloudflare D1           # metadata y proyectos
+  Cloudflare R2           # almacenamiento .tex y .pdf
+  Cloudflare Pages        # frontend web
+```
+
+### Opciones descartadas y por qué
+
+| Opción | Motivo de descarte |
+|---|---|
+| VPS dedicado de compilación | Costo, complejidad de infra, no necesario |
+| WASM en Cloudflare Worker | Límite de 128MB RAM, 30s CPU |
+| WASM en browser (SwiftLaTeX) | Proyecto poco mantenido |
+| WASM en browser (Tectonic) | Válido como fallback futuro, no como MVP |
+
+### Próximo paso acordado
+
+Construir el **core Rust** mínimo:
+1. Daemon con Axum exponiendo `POST /compile`
+2. Tectonic embebido compilando `.tex` → `.pdf`
+3. File watcher con WebSocket para live reload
+
+---
+
 ## Environment Setup (Placeholder)
 
 _To be filled in once the tech stack is decided._
 
 ```bash
-# Example placeholders — replace with real commands once established
-# Install dependencies
-# <package manager> install
+# Core Rust daemon
+cargo build --release
 
-# Run the worker
-# <run command>
+# Cross-compile para Android (via Tauri)
+# tauri android build
 
-# Run tests
-# <test command>
+# Run dev
+cargo run
 ```
 
 ---
