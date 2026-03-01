@@ -66,10 +66,11 @@ Since the tech stack is not yet established, the following are general conventio
 
 When building LaTeX processing logic:
 
-- Use standard LaTeX distributions (e.g., TeX Live, MiKTeX) as the compilation backend where applicable
-- Support standard LaTeX engines: `pdflatex`, `xelatex`, `lualatex`
-- Handle compilation errors gracefully and surface log output to the caller
-- Clean up auxiliary files (`.aux`, `.log`, `.toc`, `.out`, etc.) after compilation unless explicitly asked to keep them
+- **Compilation engine: Tectonic** (embedded as a Rust library, not a subprocess)
+- Tectonic handles multi-pass and BibTeX automatically — no manual `pdflatex` → `bibtex` → `pdflatex` loops
+- Supported source types: `.tex`, `.bib`, images (`.png`, `.jpg`, `.pdf`, `.eps`, etc.)
+- Handle compilation errors gracefully and surface the full Tectonic log to the caller
+- Auxiliary files (`.aux`, `.log`, `.toc`, `.out`, etc.) are managed in memory — no disk cleanup required
 - Treat `.tex` source files as the single source of truth; never modify them unless that is the explicit purpose of the worker
 
 ### Security
@@ -124,7 +125,7 @@ Después de evaluar varias opciones, se decidió el siguiente enfoque:
 **Motor de compilación: Tectonic**
 - Escrito en Rust, compila a WASM y targets nativos
 - Carga paquetes bajo demanda via HTTP Range Requests (compatible con R2)
-- Maneja multi-pass automáticamente
+- Maneja multi-pass automáticamente (incluye BibTeX)
 - Alternativas descartadas: TeXLive.js (abandonado), SwiftLaTeX (C → Emscripten, poco mantenido)
 
 **Modo de ejecución: Daemon local (Rust nativo)**
@@ -142,7 +143,7 @@ Después de evaluar varias opciones, se decidió el siguiente enfoque:
 
 ```
 Daemon Rust:
-  tectonic = "0.14"       # motor LaTeX embebido
+  tectonic = "0.14"       # motor LaTeX embebido (soporta .tex, .bib, imágenes)
   axum = "0.7"            # HTTP local
   tokio                   # async runtime
   notify = "6"            # file watcher (live reload)
@@ -150,9 +151,11 @@ Daemon Rust:
 Frontend:
   Cloudflare Pages        # web app (React/Svelte/etc.)
 
-Cloud (opcional, para sync/share):
-  Cloudflare D1           # metadata y proyectos
-  Cloudflare R2           # almacenamiento .tex y .pdf
+Cloud (sync/share/auth):
+  Cloudflare Access       # SSO (Google, GitHub, Microsoft — sin envío de mails)
+  Cloudflare D1           # metadata, usuarios y proyectos
+  Cloudflare R2           # archivos fuente y último PDF compilado
+  Cloudflare Durable Objects  # coordinación de edición concurrente en tiempo real
 ```
 
 ### Opciones descartadas y por qué
@@ -164,13 +167,123 @@ Cloud (opcional, para sync/share):
 | WASM en browser (SwiftLaTeX) | Proyecto poco mantenido |
 | WASM en browser (Tectonic) | Válido como fallback futuro, no como MVP |
 | Tauri 2.0 | Sobreingeniería — es solo una WebView; Rust ya es multiplataforma y el browser real es suficiente como UI |
+| Email auth | Workers no pueden enviar mails; SSO via Cloudflare Access cubre el caso |
+
+---
+
+## Architecture Decisions (session 2026-03-01 — detalle de servicios cloud)
+
+### Autenticación: Cloudflare Access (SSO)
+
+- Proveedores: Google, GitHub, Microsoft (configurable)
+- El Worker valida el JWT recibido en `Cf-Access-Jwt-Assertion`
+- El usuario se crea en D1 en el primer login (`upsert` por `sso_id`)
+- No se gestiona ningún flujo de email
+
+### D1 — Schema
+
+```sql
+users (
+  id         TEXT PRIMARY KEY,
+  sso_id     TEXT NOT NULL UNIQUE,   -- identity from SSO provider
+  provider   TEXT NOT NULL,          -- "google" | "github" | "microsoft"
+  name       TEXT NOT NULL,
+  email      TEXT NOT NULL,
+  created_at TEXT NOT NULL
+)
+
+projects (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  owner_id   TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)
+
+project_members (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  role       TEXT NOT NULL,          -- "owner" | "editor" | "viewer"
+  PRIMARY KEY (project_id, user_id)
+)
+
+files (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id),
+  name        TEXT NOT NULL,
+  r2_key      TEXT NOT NULL,
+  type        TEXT NOT NULL,         -- "tex" | "bib" | "image" | "pdf"
+  size        INTEGER,
+  updated_at  TEXT NOT NULL,
+  updated_by  TEXT NOT NULL REFERENCES users(id)
+)
+```
+
+No hay historial de compilaciones. El PDF de salida se sobreescribe en R2 cada vez que el usuario lo solicita explícitamente.
+
+### R2 — Estructura de claves
+
+```
+projects/{project_id}/tex/{filename}.tex
+projects/{project_id}/bib/{filename}.bib
+projects/{project_id}/assets/{filename}     # imágenes y otros recursos
+projects/{project_id}/output.pdf            # último PDF compilado (sobreescribe)
+```
+
+### Durable Objects — Edición concurrente
+
+Un Durable Object por proyecto activo:
+- Mantiene conexiones WebSocket con todos los editores del proyecto
+- Gestiona presencia (quién está editando)
+- Coordina y serializa cambios para evitar conflictos
+
+### Daemon — Contrato de la API
+
+El frontend recopila todos los archivos del proyecto desde R2 y los envía al daemon local en un solo request:
+
+```
+POST http://localhost:{puerto}/compile
+Content-Type: application/json
+
+{
+  "main": "<contenido completo del .tex principal>",
+  "assets": {
+    "figura.png": "<base64>",
+    "logo.jpg":   "<base64>",
+    "refs.bib":   "<contenido texto plano>",
+    "extra.tex":  "<contenido texto plano>"
+  }
+}
+```
+
+Respuesta exitosa:
+
+```
+200 OK
+Content-Type: application/pdf
+
+<bytes del PDF>
+```
+
+Respuesta con error de compilación:
+
+```
+422 Unprocessable Entity
+Content-Type: application/json
+
+{
+  "error": "compilation_failed",
+  "log": "<salida completa del log de Tectonic>"
+}
+```
 
 ### Próximo paso acordado
 
 Construir el **core Rust** mínimo:
 1. Daemon con Axum exponiendo `POST /compile`
-2. Tectonic embebido compilando `.tex` → `.pdf`
-3. File watcher con WebSocket para live reload
+2. Tectonic embebido recibiendo bundle (`.tex` + `.bib` + imágenes en memoria)
+3. Devolver PDF en bytes o log de error estructurado
+4. WebSocket en el daemon para live reload (notifica cuando el PDF cambia)
 
 ---
 
