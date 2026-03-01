@@ -379,9 +379,23 @@ npm run db:migrate:remote  # production DB
 # Local development (Worker + D1 + R2 emulated locally)
 npm run dev
 
+# Run tests (Vitest + @cloudflare/vitest-pool-workers via Miniflare)
+npm test
+
 # Deploy to Cloudflare
 npm run deploy
 ```
+
+#### Test inventory (Cloudflare Worker)
+
+| File | What it covers |
+|---|---|
+| `test/storage.test.ts` | `fileTypeFromName`, `r2KeyForSourceFile`, `outputPdfKey`, `contentTypeFor` |
+| `test/auth.test.ts` | `validateJwt`: malformed, expired, wrong audience, tampered sig, valid JWT, array aud |
+| `test/db.test.ts` | D1 CRUD: upsertUser (idempotent), createProject, getMemberRole, getUserProjects, upsertFile (upsert), deleteFile |
+| `test/api.test.ts` | HTTP routes via `SELF.fetch()`: auth guard, GET /api/me, POST/GET /api/projects, file CRUD, output.pdf store/retrieve |
+
+Tests run inside the actual Cloudflare Workers runtime (Miniflare) — D1 and R2 are fully emulated, no mocks needed except the Cloudflare Access JWKS endpoint (`fetchMock`).
 
 #### Cloudflare Worker API
 
