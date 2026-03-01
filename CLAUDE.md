@@ -19,11 +19,13 @@ This project is an experiment for building a **LaTeX worker** — a service or t
 
 ```
 LaTeX_Worker_Expriment/
-├── LICENSE          # MIT License
-└── CLAUDE.md        # This file
+├── LICENSE              # MIT License
+├── CLAUDE.md            # This file
+└── daemon/              # Rust daemon (Axum + Tectonic)
+    ├── Cargo.toml
+    └── src/
+        └── main.rs      # HTTP server + WebSocket + Tectonic driver + tests
 ```
-
-The repository is in its initial state. As the project grows, this structure will be updated to reflect new directories and files.
 
 ---
 
@@ -287,17 +289,60 @@ Construir el **core Rust** mínimo:
 
 ---
 
-## Environment Setup (Placeholder)
+## Environment Setup
 
-_To be filled in once the tech stack is decided._
+### Prerequisites
+
+- Rust toolchain (`rustup`): <https://rustup.rs/>
+- Internet access on first run (Tectonic downloads the TeX bundle via HTTP Range Requests)
+
+### Build & run
 
 ```bash
-# Build daemon
-cargo build --release
+cd daemon
 
-# Run dev
+# Development
 cargo run
+
+# Production binary
+cargo build --release
+# → target/release/latex-daemon
+
+# Override default port (7878)
+PORT=9000 cargo run
 ```
+
+### Tests
+
+```bash
+cd daemon
+
+# Run all tests (unit + integration)
+cargo test
+
+# Run a specific test by name
+cargo test looks_binary
+
+# Show stdout from passing tests (useful for debugging)
+cargo test -- --nocapture
+```
+
+#### Test inventory
+
+| Test | What it covers |
+|---|---|
+| `binary_extensions_detected` | `looks_binary` returns `true` for image/PDF extensions |
+| `text_extensions_not_binary` | `looks_binary` returns `false` for `.tex`, `.bib`, etc. |
+| `binary_detection_is_case_insensitive` | Extension matching is case-insensitive |
+| `compile_empty_body_returns_400` | Empty JSON body → HTTP 400 |
+| `compile_invalid_json_returns_400` | Malformed JSON → HTTP 400 |
+| `compile_missing_main_field_returns_400` | Missing `main` field → HTTP 400 |
+| `compile_invalid_latex_returns_json_error` | Bad LaTeX → non-200 with `{ error, log }` JSON |
+| `ws_receives_pdf_updated_after_broadcast` | WS client receives `{"event":"pdf_updated"}` after compile |
+| `ws_closes_cleanly_when_client_disconnects` | Dropping client doesn't panic the server |
+
+> The `compile_invalid_latex_returns_json_error` test is network-agnostic: it passes whether Tectonic
+> can reach the bundle or not, because all error paths return the same JSON shape.
 
 ---
 

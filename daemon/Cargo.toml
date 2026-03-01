@@ -12,3 +12,9 @@ base64 = "0.22"
 tempfile = "3"
 tectonic = { version = "0.14", features = ["external-harfbuzz"] }
 tectonic_bridge_core = "=0.4.1"
+
+[dev-dependencies]
+tower            = { version = "0.4", features = ["util"] }
+tokio-tungstenite = "0.23"
+http-body-util   = "0.1"
+futures          = "0.3"

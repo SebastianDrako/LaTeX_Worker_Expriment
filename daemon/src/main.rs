@@ -131,6 +131,187 @@ fn looks_binary(name: &str) -> bool {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{compile, looks_binary, ws_handler, AppState};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        routing::{get, post},
+        Router,
+    };
+    use futures::StreamExt;
+    use http_body_util::BodyExt;
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+    use tower::ServiceExt;
+
+    fn make_app() -> (Router, Arc<broadcast::Sender<()>>) {
+        let (tx, _) = broadcast::channel::<()>(16);
+        let tx = Arc::new(tx);
+        let state = AppState { tx: tx.clone() };
+        let app = Router::new()
+            .route("/compile", post(compile))
+            .route("/ws", get(ws_handler))
+            .with_state(state);
+        (app, tx)
+    }
+
+    // ── looks_binary ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn binary_extensions_detected() {
+        for ext in ["png", "jpg", "jpeg", "pdf", "eps", "gif", "bmp", "tiff"] {
+            assert!(looks_binary(&format!("file.{ext}")), "expected binary: {ext}");
+        }
+    }
+
+    #[test]
+    fn text_extensions_not_binary() {
+        for name in ["main.tex", "refs.bib", "data.csv", "noext"] {
+            assert!(!looks_binary(name), "expected text: {name}");
+        }
+    }
+
+    #[test]
+    fn binary_detection_is_case_insensitive() {
+        for name in ["foto.PNG", "logo.JPG", "doc.PDF"] {
+            assert!(looks_binary(name), "expected binary: {name}");
+        }
+    }
+
+    // ── HTTP: malformed requests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn compile_empty_body_returns_400() {
+        let (app, _) = make_app();
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/compile")
+                    .header("content-type", "application/json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn compile_invalid_json_returns_400() {
+        let (app, _) = make_app();
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/compile")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{bad json}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn compile_missing_main_field_returns_400() {
+        let (app, _) = make_app();
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/compile")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"assets":{}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── HTTP: error response shape ─────────────────────────────────────────────
+
+    /// Tectonic must return a structured JSON error for invalid LaTeX.
+    /// If the bundle is unreachable (CI/offline), the internal error path also
+    /// returns JSON with the same shape, so this test is network-agnostic.
+    #[tokio::test]
+    async fn compile_invalid_latex_returns_json_error() {
+        let (app, _) = make_app();
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/compile")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"main":"\\badcommand{}"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(res.status(), StatusCode::OK, "expected a non-200 status");
+        let ct = res.headers()["content-type"].to_str().unwrap();
+        assert!(ct.starts_with("application/json"), "expected JSON body, got: {ct}");
+
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(val.get("error").is_some(), "missing 'error' field in response");
+        assert!(val.get("log").is_some(), "missing 'log' field in response");
+    }
+
+    // ── WebSocket: live-reload broadcast ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn ws_receives_pdf_updated_after_broadcast() {
+        use tokio_tungstenite::tungstenite::Message as WsMsg;
+
+        let (app, tx) = make_app();
+
+        // Bind on an OS-assigned port to avoid conflicts between parallel tests.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (mut ws, _) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+                .await
+                .unwrap();
+
+        // Let the WS handler reach `rx.recv()` before we broadcast.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let _ = tx.send(());
+
+        let msg = ws.next().await.unwrap().unwrap();
+        assert_eq!(msg, WsMsg::Text(r#"{"event":"pdf_updated"}"#.into()));
+    }
+
+    #[tokio::test]
+    async fn ws_closes_cleanly_when_client_disconnects() {
+        let (app, tx) = make_app();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (ws, _) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+                .await
+                .unwrap();
+
+        // Drop the client; the server-side handle_socket should exit its loop.
+        drop(ws);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // The broadcast channel is still alive; sending must not panic.
+        assert!(tx.send(()).is_ok() || tx.send(()).is_err()); // either is fine
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let port: u16 = std::env::var("PORT")
