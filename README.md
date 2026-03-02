@@ -220,8 +220,9 @@ cargo run          # first run downloads the TeX bundle (~500 MB, cached afterwa
 # → Listening on http://localhost:7878
 ```
 
-> **First run takes a few minutes** while Tectonic fetches the TeX Live bundle from the internet.
-> Subsequent starts are instant.
+> **First run takes a few minutes** while Tectonic fetches the TeX Live bundle from the internet. Subsequent starts are instant.
+>
+> **OpenSUSE Tumbleweed:** use `CXX=scripts/cxx_wrapper cargo run` — see [Step 5](#step-5--run-the-daemon) for details.
 
 ### 3. Start the Cloudflare Worker (local)
 
@@ -303,17 +304,13 @@ npm --prefix cloudflare/ run deploy              # → https://latex-worker.<you
 The repo includes `frontend/functions/api/[[path]].ts` — a Pages Function that proxies every `/api/*` and WebSocket request to your Worker via an internal Service Binding (no CORS, auth headers preserved, zero extra latency). Wrangler picks it up automatically.
 
 ```bash
-# Run from the project root directory
-
 # 1. Build the React application
 npm --prefix frontend/ run build
 
-# 2. Deploy to Cloudflare Pages (creates the project on first run)
-npx wrangler pages deploy frontend/dist \
-  --project-name latex-worker-frontend \
-  --functions-dir frontend/functions \
-  --compatibility-date 2025-01-01 \
-  --compatibility-flags nodejs_compat
+# 2. Deploy to Cloudflare Pages — run from frontend/ so wrangler finds functions/
+cd frontend
+npx wrangler pages deploy dist --project-name latex-worker-frontend
+cd ..
 ```
 
 > `VITE_WORKER_URL` defaults to `""` (same origin) — no env var needed. Each user sets their own daemon URL; it cannot be configured globally.
@@ -329,35 +326,74 @@ After the first deploy, the Pages project exists in the dashboard. Tell Cloudfla
 3.  Redeploy for the binding to take effect.
 
 
-### Step 5 — Build and Share the Daemon Binary
+### Step 5 — Run the Daemon
 
-Use the provided Dockerfiles for reproducible, portable builds:
+Users have two options: **Docker** (zero setup) or **native binary** (lower overhead).
 
-```bash
-mkdir -p dist
+---
 
-# Linux — static musl binary (runs on any modern Linux)
-docker build -t latex-daemon-linux -f docker/linux/Dockerfile .
-docker run --rm -v $(pwd)/dist:/output latex-daemon-linux
-# → dist/latex-daemon
-
-# Windows — cross-compiled .exe
-docker build -t latex-daemon-windows -f docker/windows/Dockerfile .
-docker run --rm -v $(pwd)/dist:/output latex-daemon-windows
-# → dist/latex-daemon.exe
-```
-
-Distribute `dist/latex-daemon` (or `.exe`) to your users along with the install scripts in `daemon/install/`:
+#### Option A — Docker (recommended, any platform)
 
 ```bash
-# Linux (requires root)
-sudo bash daemon/install/install.sh     # installs + registers as a systemd service
+# Build the image once
+docker build -t latex-daemon -f docker/linux/Dockerfile .
 
-# Windows (requires Administrator)
-# Run daemon/install/install.ps1 in an elevated PowerShell prompt
+# Run — the TeX bundle is cached in a named volume so the first download
+# only happens once even across container restarts
+docker run -d \
+  --name latex-daemon \
+  -p 127.0.0.1:7878:7878 \
+  -v tectonic-cache:/root/.cache/Tectonic \
+  --restart unless-stopped \
+  latex-daemon
 ```
 
-> **Native build (no Docker):** `cargo build --release --manifest-path daemon/Cargo.toml` → `daemon/target/release/latex-daemon`. See `CLAUDE.md` for platform-specific notes.
+> **First start** downloads the TeX Live bundle (~500 MB). Subsequent starts are instant.
+
+To stop/remove: `docker stop latex-daemon && docker rm latex-daemon`
+
+---
+
+#### Option B — Native binary
+
+Install the system dependencies for your platform, then build with Cargo:
+
+**Debian / Ubuntu**
+```bash
+sudo apt-get install -y g++ pkg-config \
+    libharfbuzz-dev libfreetype-dev libfontconfig-dev libssl-dev
+cargo build --release --manifest-path daemon/Cargo.toml
+```
+
+**Arch Linux**
+```bash
+sudo pacman -S --needed base-devel harfbuzz freetype2 fontconfig openssl pkg-config
+cargo build --release --manifest-path daemon/Cargo.toml
+```
+
+**OpenSUSE Tumbleweed**
+```bash
+sudo zypper install -y gcc-c++ pkg-config \
+    harfbuzz-devel freetype-devel fontconfig-devel libopenssl-devel
+
+# ICU 75+ headers require C++17 but tectonic requests C++14 — use the wrapper:
+CXX=daemon/scripts/cxx_wrapper cargo build --release --manifest-path daemon/Cargo.toml
+```
+
+**Windows**
+Native compilation on Windows requires a full MinGW-w64 toolchain. The easiest paths are:
+- **WSL2** — use the Debian instructions above inside WSL2
+- **Docker Desktop** — use Option A
+
+The binary is at `daemon/target/release/latex-daemon` (or `.exe`). Install it as a system service with the scripts in `daemon/install/`:
+
+```bash
+# Linux — registers as a systemd service (requires root)
+sudo bash daemon/install/install.sh
+
+# Windows — registers as a Windows Service (run in elevated PowerShell)
+# .\daemon\install\install.ps1
+```
 
 ---
 
