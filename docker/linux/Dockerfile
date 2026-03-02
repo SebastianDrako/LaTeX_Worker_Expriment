@@ -35,10 +35,10 @@ RUN chmod +x /usr/local/bin/cxx_wrapper
 WORKDIR /app
 COPY . .
 
-# Build statically: crt-static + PKG_CONFIG_ALL_STATIC force-links every C dep
+# No RUSTFLAGS needed: x86_64-unknown-linux-musl links musl libc statically
+# by default. PKG_CONFIG_ALL_STATIC=1 handles the C deps (harfbuzz, etc.).
 ENV CXX=/usr/local/bin/cxx_wrapper \
-    PKG_CONFIG_ALL_STATIC=1 \
-    RUSTFLAGS="-C target-feature=+crt-static"
+    PKG_CONFIG_ALL_STATIC=1
 
 RUN cargo build --release --manifest-path daemon/Cargo.toml
 

@@ -309,7 +309,11 @@ The repo includes `frontend/functions/api/[[path]].ts` — a Pages Function that
 npm --prefix frontend/ run build
 
 # 2. Deploy to Cloudflare Pages (creates the project on first run)
-npx wrangler pages deploy frontend/dist --project-name latex-worker-frontend
+npx wrangler pages deploy frontend/dist \
+  --project-name latex-worker-frontend \
+  --functions-dir frontend/functions \
+  --compatibility-date 2025-01-01 \
+  --compatibility-flags nodejs_compat
 ```
 
 > `VITE_WORKER_URL` defaults to `""` (same origin) — no env var needed. Each user sets their own daemon URL; it cannot be configured globally.
