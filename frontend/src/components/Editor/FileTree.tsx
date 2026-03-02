@@ -14,6 +14,7 @@ interface Props {
   canWrite: boolean;
   onSelect: (file: ProjectFile) => void;
   onUpload: (file: File) => Promise<void>;
+  onCreate: (name: string) => Promise<void>;
   onDelete: (fileName: string) => Promise<void>;
   onRename: (oldName: string, newName: string) => Promise<void>;
 }
@@ -24,6 +25,7 @@ export function FileTree({
   canWrite,
   onSelect,
   onUpload,
+  onCreate,
   onDelete,
   onRename,
 }: Props) {
@@ -31,6 +33,9 @@ export function FileTree({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [creatingFile, setCreatingFile] = useState(false);
+  const [newFileName, setNewFileName] = useState("");
+  const newFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []);
@@ -38,6 +43,20 @@ export function FileTree({
       await onUpload(f);
     }
     if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const startCreate = () => {
+    setCreatingFile(true);
+    setNewFileName("");
+    setTimeout(() => newFileInputRef.current?.focus(), 0);
+  };
+
+  const commitCreate = async () => {
+    const name = newFileName.trim();
+    setCreatingFile(false);
+    setNewFileName("");
+    if (!name) return;
+    await onCreate(name);
   };
 
   const handleDelete = async (e: React.MouseEvent, name: string) => {
@@ -69,6 +88,13 @@ export function FileTree({
           <div className="file-tree-actions">
             <button
               className="icon-btn"
+              title="New file"
+              onClick={startCreate}
+            >
+              +
+            </button>
+            <button
+              className="icon-btn"
               title="Upload file"
               onClick={() => inputRef.current?.click()}
             >
@@ -86,9 +112,26 @@ export function FileTree({
       </div>
 
       <div className="file-list">
-        {files.length === 0 && (
+        {creatingFile && (
+          <div className="file-item">
+            <span className="file-icon">📄</span>
+            <input
+              ref={newFileInputRef}
+              className="file-rename-input"
+              placeholder="filename.tex"
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              onBlur={() => void commitCreate()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); void commitCreate(); }
+                if (e.key === "Escape") { setCreatingFile(false); setNewFileName(""); }
+              }}
+            />
+          </div>
+        )}
+        {!creatingFile && files.length === 0 && (
           <p style={{ padding: "12px", color: "var(--text-muted)", fontSize: 11 }}>
-            No files yet. Upload a .tex file to get started.
+            No files yet. Use + to create or ↑ to upload.
           </p>
         )}
         {files.map((file) => (

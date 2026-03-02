@@ -46,12 +46,14 @@ export async function upsertUser(db: D1Database, claims: AccessClaims): Promise<
   // Derive provider from the Access issuer hostname (e.g. "myteam.cloudflareaccess.com" → "cloudflare")
   const provider = "cloudflare";
 
+  const name = claims.name ?? claims.email.split("@")[0];
+
   await db
     .prepare("INSERT INTO users (id, sso_id, provider, name, email, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, claims.sub, provider, claims.name, claims.email, now)
+    .bind(id, claims.sub, provider, name, claims.email, now)
     .run();
 
-  return { id, sso_id: claims.sub, provider, name: claims.name, email: claims.email, created_at: now };
+  return { id, sso_id: claims.sub, provider, name, email: claims.email, created_at: now };
 }
 
 // ── Projects ──────────────────────────────────────────────────────────────────

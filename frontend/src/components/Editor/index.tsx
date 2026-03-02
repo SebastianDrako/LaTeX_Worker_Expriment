@@ -21,10 +21,10 @@ export function EditorView({ project, onBack }: Props) {
   const auth = useAuth();
   const userName = auth.status === "authenticated" ? auth.user.name : "Anonymous";
 
-  const { project: detail, uploadFile: doUpload, deleteFile, renameFile, renameProjectName } = useProject(project.id);
+  const { project: detail, uploadFile: doUpload, createFile, deleteFile, renameFile, renameProjectName } = useProject(project.id);
   const { selectedFile, setSelectedFile } = useSelectedFile(detail?.files ?? []);
 
-  const [fileContent, setFileContent] = useState<string>("");
+  const [fileContent, setFileContent] = useState<string | null>(null);
   const [pdfReload, setPdfReload] = useState(0);
   const [showShare, setShowShare] = useState(false);
 
@@ -57,6 +57,7 @@ export function EditorView({ project, onBack }: Props) {
       setFileContent("");
       return;
     }
+    setFileContent(null); // reset while loading so CodeEditor remounts with real content
     getFileContent(project.id, selectedFile.name)
       .then(setFileContent)
       .catch(() => setFileContent(""));
@@ -104,6 +105,7 @@ export function EditorView({ project, onBack }: Props) {
               canWrite={canWrite}
               onSelect={setSelectedFile}
               onUpload={doUpload}
+              onCreate={createFile}
               onDelete={deleteFile}
               onRename={renameFile}
             />
@@ -113,7 +115,7 @@ export function EditorView({ project, onBack }: Props) {
 
           {/* Editor */}
           <Panel defaultSize={41} minSize={20}>
-            {isEditable ? (
+            {isEditable && fileContent !== null ? (
               <CodeEditor
                 projectId={project.id}
                 fileName={selectedFile.name}

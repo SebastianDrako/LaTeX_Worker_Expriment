@@ -42,6 +42,21 @@ export function useProject(projectId: string | null) {
     [projectId],
   );
 
+  const createFile = useCallback(
+    async (name: string) => {
+      if (!projectId) return;
+      const ext = name.split(".").pop()?.toLowerCase();
+      const initialContent =
+        ext === "tex"
+          ? "\\documentclass{article}\n\n\\begin{document}\n\n\\end{document}\n"
+          : "";
+      await apiUploadFile(projectId, name, initialContent, "text/plain");
+      const files = await listFiles(projectId);
+      setProject((p) => (p ? { ...p, files } : null));
+    },
+    [projectId],
+  );
+
   const deleteFile = useCallback(
     async (fileName: string) => {
       if (!projectId) return;
@@ -72,7 +87,7 @@ export function useProject(projectId: string | null) {
     [projectId],
   );
 
-  return { project, loading, error, reload, uploadFile, deleteFile, renameFile, renameProjectName };
+  return { project, loading, error, reload, uploadFile, createFile, deleteFile, renameFile, renameProjectName };
 }
 
 export function useSelectedFile(files: ProjectFile[]) {
