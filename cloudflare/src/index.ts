@@ -234,6 +234,15 @@ export default {
           updated_by: user.id,
         });
         await updateProjectTimestamp(env.DB, projectId);
+        ctx.waitUntil(
+          roomFor(env, projectId).fetch(
+            new Request("https://do/broadcast", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ event: "files_updated" }),
+            }),
+          ),
+        );
         return json(file);
       }
 
@@ -271,6 +280,15 @@ export default {
         if (oldR2Key) await env.STORAGE.delete(oldR2Key);
 
         await updateProjectTimestamp(env.DB, projectId);
+        ctx.waitUntil(
+          roomFor(env, projectId).fetch(
+            new Request("https://do/broadcast", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ event: "files_updated" }),
+            }),
+          ),
+        );
         return new Response(null, { status: 204 });
       }
 
@@ -280,6 +298,15 @@ export default {
         if (!deletedKey) return err("File not found", 404);
         await env.STORAGE.delete(deletedKey);
         await updateProjectTimestamp(env.DB, projectId);
+        ctx.waitUntil(
+          roomFor(env, projectId).fetch(
+            new Request("https://do/broadcast", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ event: "files_updated" }),
+            }),
+          ),
+        );
         return new Response(null, { status: 204 });
       }
     }

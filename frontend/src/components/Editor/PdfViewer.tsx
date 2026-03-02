@@ -112,7 +112,7 @@ export function PdfViewer({ projectId, projectName, reloadSignal }: Props) {
           });
         },
         // 300 px lookahead so pages render before the user actually reaches them.
-        { root: scrollEl, rootMargin: "300px" },
+        { root: scrollEl, rootMargin: "400px" },
       );
 
       canvases.forEach((canvas) => observer.observe(canvas));
@@ -156,7 +156,7 @@ export function PdfViewer({ projectId, projectName, reloadSignal }: Props) {
             Compile your project to see the PDF here.
           </p>
         )}
-        <div ref={containerRef} style={{ display: "contents" }} />
+        <div ref={containerRef} className="pdf-pages-container" />
       </div>
     </div>
   );

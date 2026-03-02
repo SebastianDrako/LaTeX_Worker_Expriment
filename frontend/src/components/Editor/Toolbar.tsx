@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
 import type { CompileStatus } from "../../types";
+import type { CollabUser } from "./CodeEditor";
 
 interface Props {
   projectName: string;
   status: CompileStatus;
   isOwner: boolean;
+  activeUsers: CollabUser[];
   onCompile: () => void;
   onBack: () => void;
   onShare: () => void;
@@ -22,6 +24,7 @@ export function Toolbar({
   projectName,
   status,
   isOwner,
+  activeUsers,
   onCompile,
   onBack,
   onShare,
@@ -85,6 +88,22 @@ export function Toolbar({
       </span>
 
       <span className="toolbar-spacer" />
+
+      {/* Active collaborators */}
+      {activeUsers.length > 0 && (
+        <div className="presence-avatars" aria-label="Active collaborators">
+          {activeUsers.map((u) => (
+            <span
+              key={u.name}
+              className="presence-avatar"
+              title={u.name}
+              style={{ background: u.color }}
+            >
+              {u.name.charAt(0).toUpperCase()}
+            </span>
+          ))}
+        </div>
+      )}
 
       <span className={`toolbar-status ${status}`}>{STATUS_LABEL[status]}</span>
 

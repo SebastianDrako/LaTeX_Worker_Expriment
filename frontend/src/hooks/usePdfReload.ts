@@ -4,16 +4,22 @@ import { RobustWebSocket } from "../api/websocket";
 
 /**
  * Opens a WebSocket to the project room using the RobustWebSocket client
- * and calls `onPdfUpdated` whenever the server broadcasts { event: "pdf_updated" }.
+ * and dispatches JSON event notifications to the appropriate callbacks.
  *
- * The RobustWebSocket handles reconnection logic automatically.
+ * Handled events:
+ *   { event: "pdf_updated" }   → calls onPdfUpdated
+ *   { event: "files_updated" } → calls onFilesUpdated (if provided)
  */
 export function usePdfReload(
   projectId: string | null,
   onPdfUpdated: () => void,
+  onFilesUpdated?: () => void,
 ) {
-  const cbRef = useRef(onPdfUpdated);
-  cbRef.current = onPdfUpdated;
+  const pdfCbRef = useRef(onPdfUpdated);
+  pdfCbRef.current = onPdfUpdated;
+
+  const filesCbRef = useRef(onFilesUpdated);
+  filesCbRef.current = onFilesUpdated;
 
   useEffect(() => {
     if (!projectId) return;
@@ -25,7 +31,9 @@ export function usePdfReload(
         try {
           const msg = JSON.parse(event.data) as { event: string };
           if (msg.event === "pdf_updated") {
-            cbRef.current();
+            pdfCbRef.current();
+          } else if (msg.event === "files_updated") {
+            filesCbRef.current?.();
           }
         } catch {
           // ignore malformed messages

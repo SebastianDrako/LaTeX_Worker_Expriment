@@ -32,6 +32,7 @@ struct CompileError {
     log: String,
 }
 
+
 async fn compile(State(state): State<AppState>, Json(req): Json<CompileRequest>) -> Response {
     let task = tokio::task::spawn_blocking(move || run_tectonic(req));
     match tokio::time::timeout(Duration::from_secs(30), task).await {
@@ -167,10 +168,21 @@ mod tests {
         let (tx, _) = broadcast::channel::<()>(16);
         let tx = Arc::new(tx);
         let state = AppState { tx: tx.clone() };
+
+        let cors = CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([axum::http::header::CONTENT_TYPE])
+            .allow_private_network(true);
+
         let app = Router::new()
             .route("/compile", post(compile))
             .route("/ws", get(ws_handler))
-            .layer(CorsLayer::permissive())
+            .layer(cors)
             .with_state(state);
         (app, tx)
     }
@@ -393,15 +405,26 @@ async fn main() {
     let (tx, _) = broadcast::channel::<()>(16);
     let state = AppState { tx: Arc::new(tx) };
 
+    let cors = CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([axum::http::header::CONTENT_TYPE])
+        .allow_private_network(true);
+
     let app = Router::new()
         .route("/compile", post(compile))
         .route("/ws", get(ws_handler))
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .unwrap();
 
-    println!("latex-daemon listening on http://127.0.0.1:{port}");
+    println!("latex-daemon listening on http://0.0.0.0:{port}");
     axum::serve(listener, app).await.unwrap();
 }

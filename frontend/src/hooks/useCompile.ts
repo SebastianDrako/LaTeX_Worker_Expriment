@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { getFileBinary, getFileContent, listFiles, uploadOutputPdf } from "../api/client";
 import type { CompileStatus } from "../types";
 
-const DAEMON_URL = import.meta.env.VITE_DAEMON_URL ?? "http://localhost:7878";
+const DAEMON_URL = import.meta.env.VITE_DAEMON_URL ?? "http://127.0.0.1:7878";
 
 function isBinary(name: string): boolean {
   return /\.(png|jpe?g|gif|pdf|eps|svg|tiff?|bmp|webp)$/i.test(name);

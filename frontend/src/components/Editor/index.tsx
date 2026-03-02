@@ -6,7 +6,7 @@ import { useCompile } from "../../hooks/useCompile";
 import { usePdfReload } from "../../hooks/usePdfReload";
 import { useProject, useSelectedFile } from "../../hooks/useProject";
 import type { Project } from "../../types";
-import { CodeEditor } from "./CodeEditor";
+import { CodeEditor, type CollabUser } from "./CodeEditor";
 import { FileTree } from "./FileTree";
 import { PdfViewer } from "./PdfViewer";
 import { ShareModal } from "./ShareModal";
@@ -21,12 +21,13 @@ export function EditorView({ project, onBack }: Props) {
   const auth = useAuth();
   const userName = auth.status === "authenticated" ? auth.user.name : "Anonymous";
 
-  const { project: detail, uploadFile: doUpload, createFile, deleteFile, renameFile, renameProjectName } = useProject(project.id);
+  const { project: detail, uploadFile: doUpload, createFile, deleteFile, renameFile, renameProjectName, reload } = useProject(project.id);
   const { selectedFile, setSelectedFile } = useSelectedFile(detail?.files ?? []);
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [pdfReload, setPdfReload] = useState(0);
   const [showShare, setShowShare] = useState(false);
+  const [activeUsers, setActiveUsers] = useState<CollabUser[]>([]);
 
   const { status, errorLog, compile } = useCompile(project.id);
   const canWrite = detail?.role === "owner" || detail?.role === "editor";
@@ -63,8 +64,12 @@ export function EditorView({ project, onBack }: Props) {
       .catch(() => setFileContent(""));
   }, [project.id, selectedFile]);
 
-  // PDF auto-reload via WebSocket
-  usePdfReload(project.id, () => setPdfReload((n) => n + 1));
+  // PDF auto-reload + file tree sync via WebSocket
+  usePdfReload(
+    project.id,
+    () => setPdfReload((n) => n + 1),
+    () => void reload(),
+  );
 
   // Keyboard shortcut: Ctrl+Enter to compile
   useEffect(() => {
@@ -89,6 +94,7 @@ export function EditorView({ project, onBack }: Props) {
         projectName={detail?.name ?? project.name}
         status={status}
         isOwner={detail?.role === "owner"}
+        activeUsers={activeUsers}
         onCompile={() => void compile()}
         onBack={onBack}
         onShare={() => setShowShare(true)}
@@ -122,6 +128,7 @@ export function EditorView({ project, onBack }: Props) {
                 initialContent={fileContent}
                 userName={userName}
                 onChange={handleContentChange}
+                onUsersChange={setActiveUsers}
               />
             ) : (
               <div

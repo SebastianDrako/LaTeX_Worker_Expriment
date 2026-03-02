@@ -163,6 +163,33 @@ input, textarea {
 
 .toolbar-spacer { flex: 1; }
 
+.presence-avatars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.presence-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  cursor: default;
+  border: 2px solid var(--bg-toolbar);
+  transition: transform 0.15s;
+}
+
+.presence-avatar:hover {
+  transform: scale(1.15);
+  z-index: 1;
+}
+
 .toolbar-rename-input {
   background: var(--bg-sidebar);
   border: 1px solid var(--accent);
@@ -350,6 +377,7 @@ input, textarea {
 
 /* ── PDF panel ────────────────────────────────────────────────────────────── */
 .pdf-panel {
+  height: 100%;
   background: var(--bg-pdf);
   overflow: hidden;
   display: flex;
@@ -377,7 +405,14 @@ input, textarea {
   flex-direction: column;
   align-items: center;
   padding: 16px;
+}
+
+.pdf-pages-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 12px;
+  width: 100%;
 }
 
 .pdf-page-canvas {

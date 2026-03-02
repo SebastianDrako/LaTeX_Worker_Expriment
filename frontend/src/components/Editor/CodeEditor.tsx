@@ -19,32 +19,19 @@ import {
 import { useEffect, useRef } from "react";
 import * as Y from "yjs";
 import { yCollab } from "y-codemirror.next";
-import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness"; // Import encodeAwarenessUpdate
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
 import { fetchYjsSnapshot, wsUrl } from "../../api/client";
-import { RobustWebSocket } from "../../api/websocket"; // Import RobustWebSocket
+import { RobustWebSocket } from "../../api/websocket";
 
 // ── Custom LaTeX StreamLanguage ───────────────────────────────────────────────
-// Provides syntax highlighting without an external grammar package.
 
 const latexLanguage = StreamLanguage.define<{ inMath: boolean }>({
   startState: () => ({ inMath: false }),
 
   token(stream, state) {
-    // Line comment
-    if (stream.match(/%/)) {
-      stream.skipToEnd();
-      return "comment";
-    }
-
-    // Math toggle: $$ or $
-    if (stream.match(/\$\$/)) {
-      state.inMath = !state.inMath;
-      return "string";
-    }
-    if (stream.match(/\$/)) {
-      state.inMath = !state.inMath;
-      return "string";
-    }
+    if (stream.match(/%/)) { stream.skipToEnd(); return "comment"; }
+    if (stream.match(/\$\$/)) { state.inMath = !state.inMath; return "string"; }
+    if (stream.match(/\$/)) { state.inMath = !state.inMath; return "string"; }
 
     if (state.inMath) {
       if (stream.match(/\\[a-zA-Z]+/)) return "keyword";
@@ -52,20 +39,11 @@ const latexLanguage = StreamLanguage.define<{ inMath: boolean }>({
       return "string";
     }
 
-    // Commands: \word or \symbol
     if (stream.match(/\\[a-zA-Z]+\*?/)) return "keyword";
     if (stream.match(/\\/)) { stream.next(); return "keyword"; }
-
-    // Braces
     if (stream.match(/[{}]/)) return "bracket";
-
-    // Optional args
     if (stream.match(/\[[^\]]*\]/)) return "atom";
-
-    // Environment name after \begin or \end
     if (stream.match(/\{[^}]*\}/)) return "atom";
-
-    // Numbers
     if (stream.match(/\d+/)) return "number";
 
     stream.next();
@@ -75,7 +53,6 @@ const latexLanguage = StreamLanguage.define<{ inMath: boolean }>({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Generates a deterministic HSL color from a string (used for cursor colours). */
 function colorFromName(name: string): string {
   let hash = 0;
   for (const ch of name) hash = Math.imul(31, hash) + ch.charCodeAt(0);
@@ -91,6 +68,7 @@ function createYjsExtensions(
   snapshot: Uint8Array | null,
   initialContent: string,
   userName: string,
+  onUsersChange: ((users: CollabUser[]) => void) | undefined,
 ) {
   const ydoc = new Y.Doc();
 
@@ -116,32 +94,66 @@ function createYjsExtensions(
 
   const ws = new RobustWebSocket(wsUrl(projectId, docName));
 
+  // ── Outgoing ──────────────────────────────────────────────────────────────
+
   ws.onopen = () => {
-    // On connect or reconnect, send our current state to sync with peers.
-    const stateUpdate = Y.encodeStateAsUpdate(ydoc);
-    ws.send(stateUpdate as unknown as ArrayBuffer); // Cast via unknown
-    // Also broadcast our awareness state.
-    const awarenessUpdate = encodeAwarenessUpdate(awareness, [ydoc.clientID]);
-    ws.send(awarenessUpdate as unknown as ArrayBuffer); // Cast via unknown
+    // Sync full doc state to the room on (re)connect.
+    ws.send(Y.encodeStateAsUpdate(ydoc) as unknown as ArrayBuffer);
+    // Announce our presence via JSON (DO relays text to all clients).
+    const awarenessBytes = encodeAwarenessUpdate(awareness, [ydoc.clientID]);
+    ws.send(JSON.stringify({ type: "awareness", data: Array.from(awarenessBytes) }));
   };
+
+  // Doc changes → binary relay through DO (same-file clients only).
+  ydoc.on("update", (update: Uint8Array, origin: unknown) => {
+    if (origin !== "remote") {
+      ws.send(update as unknown as ArrayBuffer);
+    }
+  });
+
+  // Cursor/presence changes → JSON relay through DO (all clients).
+  awareness.on("update", (
+    { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
+    origin: unknown,
+  ) => {
+    if (origin === "remote") return; // don't re-broadcast what we received
+    const ids = [...added, ...updated, ...removed];
+    const awarenessBytes = encodeAwarenessUpdate(awareness, ids);
+    ws.send(JSON.stringify({ type: "awareness", data: Array.from(awarenessBytes) }));
+  });
+
+  // ── Incoming ──────────────────────────────────────────────────────────────
 
   ws.onmessage = (event) => {
     if (event.data instanceof ArrayBuffer) {
+      // Binary = Yjs doc update from another editor on the same file.
       Y.applyUpdate(ydoc, new Uint8Array(event.data), "remote");
+    } else if (typeof event.data === "string") {
+      try {
+        const msg = JSON.parse(event.data) as { type?: string; data?: number[] };
+        if (msg.type === "awareness" && Array.isArray(msg.data)) {
+          applyAwarenessUpdate(awareness, new Uint8Array(msg.data), "remote");
+        }
+        // pdf_updated / files_updated are handled by usePdfReload — ignore here.
+      } catch {
+        // ignore malformed messages
+      }
     }
-    // text (JSON) messages are for PDF notifications, not Yjs — ignore here
   };
 
-  ydoc.on("update", (update: Uint8Array, origin: unknown) => {
-    if (origin !== "remote") {
-      ws.send(update as unknown as ArrayBuffer); // Cast via unknown
-    }
-  });
+  // ── Presence updates for toolbar ─────────────────────────────────────────
 
-  awareness.on("update", (update: { added: number[], updated: number[], removed: number[] }) => {
-    const awarenessUpdate = encodeAwarenessUpdate(awareness, Object.keys(update).flatMap(key => update[key as keyof typeof update]));
-    ws.send(awarenessUpdate as unknown as ArrayBuffer); // Cast via unknown
-  });
+  if (onUsersChange) {
+    awareness.on("change", () => {
+      const users: CollabUser[] = [];
+      awareness.getStates().forEach((state, clientId) => {
+        if (clientId !== ydoc.clientID && state.user) {
+          users.push(state.user as CollabUser);
+        }
+      });
+      onUsersChange(users);
+    });
+  }
 
   const cleanup = () => {
     awareness.destroy();
@@ -149,10 +161,15 @@ function createYjsExtensions(
     ws.close();
   };
 
-  return { ytext, awareness, cleanup, ydoc };
+  return { ytext, awareness, cleanup };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+
+export interface CollabUser {
+  name: string;
+  color: string;
+}
 
 interface Props {
   projectId: string;
@@ -160,30 +177,29 @@ interface Props {
   initialContent: string;
   userName: string;
   onChange?: (content: string) => void;
+  onUsersChange?: (users: CollabUser[]) => void;
 }
 
-export function CodeEditor({ projectId, fileName, initialContent, userName, onChange }: Props) {
+export function CodeEditor({ projectId, fileName, initialContent, userName, onChange, onUsersChange }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const onUsersChangeRef = useRef(onUsersChange);
+  onUsersChangeRef.current = onUsersChange;
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Destroy previous editor instance when switching files.
     viewRef.current?.destroy();
     viewRef.current = null;
     cleanupRef.current?.();
     cleanupRef.current = null;
 
-    // Capture values for the async init closure.
     const container = containerRef.current;
     const capturedContent = initialContent;
     let cancelled = false;
 
     async function init() {
-      // Fetch the persisted Yjs snapshot before opening the WebSocket.
-      // On error (network down, etc.) fall back gracefully to plain text.
       const snapshot = await fetchYjsSnapshot(projectId, fileName).catch(() => null);
       if (cancelled || !container) return;
 
@@ -193,6 +209,7 @@ export function CodeEditor({ projectId, fileName, initialContent, userName, onCh
         snapshot,
         capturedContent,
         userName,
+        onUsersChangeRef.current,
       );
       cleanupRef.current = cleanup;
 
@@ -217,12 +234,7 @@ export function CodeEditor({ projectId, fileName, initialContent, userName, onCh
           search({ top: true }),
           latexLanguage,
           oneDark,
-          keymap.of([
-            indentWithTab,
-            ...defaultKeymap,
-            ...historyKeymap,
-            ...searchKeymap,
-          ]),
+          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
           yCollab(ytext, awareness),
           updateListener,
           EditorView.theme({
@@ -245,7 +257,6 @@ export function CodeEditor({ projectId, fileName, initialContent, userName, onCh
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  // Re-create the editor when the project or file changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, fileName]);
 
