@@ -219,7 +219,8 @@ export async function fetchYjsSnapshot(
  */
 export function wsUrl(projectId: string, fileName?: string): string {
   const workerUrl = import.meta.env.VITE_WORKER_URL ?? "";
-  const base = workerUrl.replace(/^http/, "ws") || `ws://${location.host}`;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const base = workerUrl.replace(/^http/, "ws") || `${proto}//${location.host}`;
   const url = `${base}/api/projects/${projectId}/ws`;
   return fileName ? `${url}?file=${encodeURIComponent(fileName)}` : url;
 }

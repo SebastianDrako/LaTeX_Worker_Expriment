@@ -249,74 +249,111 @@ Open [http://localhost:5173](http://localhost:5173). Because Cloudflare Access i
 
 ## Deploying to production
 
-### Step 1 — Cloudflare account setup (one-time)
+Deploying this project involves four main parts:
+1.  **One-Time Setup:** Creating the necessary Cloudflare resources (D1, R2, Access).
+2.  **Worker Deployment:** Publishing the backend API and database migrations.
+3.  **Frontend Deployment:** Publishing the user interface and connecting it to the Worker.
+4.  **Daemon Build:** Compiling the daemon binary for users to run locally.
+
+### Step 1 — One-Time Cloudflare Setup
 
 ```bash
-# Log in
 npx wrangler login
 
-# Create the D1 database (copy the id into cloudflare/wrangler.toml → database_id)
-npx wrangler d1 create latex-worker-db
-
-# Create the R2 bucket
+npx wrangler d1 create latex-worker-db       # note the database_id in the output
 npx wrangler r2 bucket create latex-worker-files
 ```
 
-### Step 2 — Cloudflare Access (SSO)
+After creating the D1 database, wrangler will output a `database_id`. You **must** add this to the worker's configuration file.
+- Open `cloudflare/wrangler.toml`.
+- Find the `[[d1_databases]]` section.
+- Replace the placeholder `REPLACE_WITH_D1_DATABASE_ID` with the `database_id` you just received.
 
-1. Go to **Zero Trust → Access → Applications** in the Cloudflare dashboard.
-2. Create a new **Self-hosted** application pointing at your Worker domain.
-3. Add identity providers: Google, GitHub, or Microsoft.
-4. Copy the **Application Audience Tag** (AUD).
+### Step 2 — Configure Cloudflare Access (SSO)
+
+This is a manual step in the Cloudflare dashboard to protect your application.
+
+1.  Go to the **Zero Trust** dashboard.
+2.  Navigate to **Access → Applications** and add a new **Self-hosted** application.
+3.  **Application Domain:** Set this to the final URL of your **frontend** (e.g., `https://latex-worker-frontend.pages.dev`). This is important for redirects to work correctly.
+4.  Create at least one **policy** to allow users (e.g., based on their email address).
+5.  Configure your desired **identity providers** (Google, GitHub, One-Time PIN, etc.).
+6.  Once created, find and note two values from the application's page:
+    *   **Application Audience (AUD) Tag**.
+    *   Your **Team Domain** (from the URL, e.g., `my-team.cloudflareaccess.com`).
+
+Then set them as encrypted Worker secrets (you'll be prompted to enter the values):
 
 ```bash
-npx wrangler secret put CF_ACCESS_TEAM_DOMAIN   # e.g. myteam.cloudflareaccess.com
-npx wrangler secret put CF_ACCESS_AUD           # the AUD tag from the Access dashboard
+npx wrangler secret put CF_ACCESS_TEAM_DOMAIN
+npx wrangler secret put CF_ACCESS_AUD
 ```
 
 ### Step 3 — Deploy the Worker
 
 ```bash
-cd cloudflare
-npm run db:migrate:remote   # apply D1 schema to production
-npm run deploy
-# → https://latex-worker.<your-subdomain>.workers.dev
+npm --prefix cloudflare/ run db:migrate:remote   # apply D1 migrations
+npm --prefix cloudflare/ run deploy              # → https://latex-worker.<you>.workers.dev
 ```
 
-### Step 4 — Deploy the frontend (Cloudflare Pages)
+### Step 4 — Deploy the Frontend & Connect to Worker
+
+**Part A: Build and Deploy**
+
+The repo includes `frontend/functions/api/[[path]].ts` — a Pages Function that proxies every `/api/*` and WebSocket request to your Worker via an internal Service Binding (no CORS, auth headers preserved, zero extra latency). Wrangler picks it up automatically.
 
 ```bash
-cd frontend
-npm run build               # outputs to dist/
+# Run from the project root directory
 
-# Option A: Wrangler
-npx wrangler pages deploy dist --project-name latex-worker-frontend
+# 1. Build the React application
+npm --prefix frontend/ run build
 
-# Option B: Connect your GitHub repo in the Cloudflare Pages dashboard
-# Build command: cd frontend && npm run build
-# Output directory: frontend/dist
+# 2. Deploy to Cloudflare Pages (creates the project on first run)
+npx wrangler pages deploy frontend/dist --project-name latex-worker-frontend
 ```
 
-Set the following environment variables in Pages settings:
+> `VITE_WORKER_URL` defaults to `""` (same origin) — no env var needed. Each user sets their own daemon URL; it cannot be configured globally.
 
-| Variable | Value |
-|---|---|
-| `VITE_WORKER_URL` | `""` (empty — same origin if Pages + Worker share a domain) |
-| `VITE_DAEMON_URL` | `http://localhost:7878` (always local) |
+**Part B: Configure the Service Binding**
 
-### Step 5 — Share the daemon binary with your users
+After the first deploy, the Pages project exists in the dashboard. Tell Cloudflare what `LATEX_WORKER` refers to:
 
-The daemon must run on each user's machine. Build a release binary:
+1.  Go to your **Pages project → Settings → Functions → Service Bindings**.
+2.  Click **Add binding** and set:
+    *   **Variable name:** `LATEX_WORKER`
+    *   **Service:** Select your `latex-worker` from the dropdown.
+3.  Redeploy for the binding to take effect.
+
+
+### Step 5 — Build and Share the Daemon Binary
+
+Use the provided Dockerfiles for reproducible, portable builds:
 
 ```bash
-cd daemon
-cargo build --release
-# → daemon/target/release/latex-daemon
+mkdir -p dist
+
+# Linux — static musl binary (runs on any modern Linux)
+docker build -t latex-daemon-linux -f docker/linux/Dockerfile .
+docker run --rm -v $(pwd)/dist:/output latex-daemon-linux
+# → dist/latex-daemon
+
+# Windows — cross-compiled .exe
+docker build -t latex-daemon-windows -f docker/windows/Dockerfile .
+docker run --rm -v $(pwd)/dist:/output latex-daemon-windows
+# → dist/latex-daemon.exe
 ```
 
-Distribute this binary alongside a one-line startup script. Users run it once; it stays alive in the background.
+Distribute `dist/latex-daemon` (or `.exe`) to your users along with the install scripts in `daemon/install/`:
 
-> **Windows/macOS/Linux** — Rust compiles natively. No WebView, no Electron, no runtime dependency beyond the binary itself.
+```bash
+# Linux (requires root)
+sudo bash daemon/install/install.sh     # installs + registers as a systemd service
+
+# Windows (requires Administrator)
+# Run daemon/install/install.ps1 in an elevated PowerShell prompt
+```
+
+> **Native build (no Docker):** `cargo build --release --manifest-path daemon/Cargo.toml` → `daemon/target/release/latex-daemon`. See `CLAUDE.md` for platform-specific notes.
 
 ---
 
