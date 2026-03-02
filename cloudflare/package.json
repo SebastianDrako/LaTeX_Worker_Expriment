@@ -3,14 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev":               "wrangler dev",
-    "deploy":            "wrangler deploy",
-    "types":             "wrangler types",
-    "check":             "tsc --noEmit",
-    "test":              "vitest run",
-    "test:watch":        "vitest",
-    "db:migrate:local":  "wrangler d1 migrations apply latex-worker-db --local",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate:local": "wrangler d1 migrations apply latex-worker-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply latex-worker-db --remote"
+  },
+  "dependencies": {
+    "cloudflare": "^5.2.0",
+    "yjs": "^13"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.5",

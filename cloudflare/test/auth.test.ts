@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { fetchMock } from "cloudflare:test";
 import { validateJwt } from "../src/auth";
-import { generateTestKeyPair, signJwt, testClaims, type TestKeyPair } from "./helpers";
+import { generateTestKeyPair, signJwt, tamperJwtSignature, testClaims, type TestKeyPair } from "./helpers";
 
 const TEAM_DOMAIN = "test.cloudflareaccess.com";
 const AUD = "test-audience-12345";
@@ -55,11 +55,8 @@ describe("validateJwt — invalid inputs", () => {
 
   it("returns null when signature is tampered with", async () => {
     const jwt = await signJwt(testClaims(), pair);
-    const parts = jwt.split(".");
-    // Flip the last character of the signature
-    const last = parts[2];
-    parts[2] = last.slice(0, -1) + (last.endsWith("A") ? "B" : "A");
-    expect(await validateJwt(parts.join("."), TEAM_DOMAIN, AUD)).toBeNull();
+    const tampered = tamperJwtSignature(jwt);
+    expect(await validateJwt(tampered, TEAM_DOMAIN, AUD)).toBeNull();
   });
 });
 

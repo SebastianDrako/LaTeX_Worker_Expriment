@@ -1,6 +1,7 @@
 name            = "latex-worker"
 main            = "src/index.ts"
 compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # ── D1 database ───────────────────────────────────────────────────────────────
 [[d1_databases]]
@@ -21,7 +22,7 @@ bindings = [
 
 [[migrations]]
 tag         = "v1"
-new_classes = ["ProjectRoom"]
+new_sqlite_classes = ["ProjectRoom"]
 
 # ── Env vars (non-secret) ─────────────────────────────────────────────────────
 # Secrets (CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD) must be set via:

@@ -8,6 +8,21 @@ function isBinary(name: string): boolean {
   return /\.(png|jpe?g|gif|pdf|eps|svg|tiff?|bmp|webp)$/i.test(name);
 }
 
+/**
+ * Converts an ArrayBuffer to a Base64 string in chunks to avoid stack overflows.
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
 export function useCompile(projectId: string | null) {
   const [status, setStatus] = useState<CompileStatus>("idle");
   const [errorLog, setErrorLog] = useState<string | null>(null);
@@ -32,9 +47,7 @@ export function useCompile(projectId: string | null) {
             mainTex = await getFileContent(projectId, file.name);
           } else if (isBinary(file.name)) {
             const buf = await getFileBinary(projectId, file.name);
-            assets[file.name] = btoa(
-              String.fromCharCode(...new Uint8Array(buf)),
-            );
+            assets[file.name] = arrayBufferToBase64(buf);
           } else {
             assets[file.name] = await getFileContent(projectId, file.name);
           }

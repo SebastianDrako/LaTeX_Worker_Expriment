@@ -163,6 +163,19 @@ input, textarea {
 
 .toolbar-spacer { flex: 1; }
 
+.toolbar-rename-input {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  outline: none;
+  width: 200px;
+  max-width: 300px;
+}
+
 .toolbar-status {
   font-size: 11px;
   color: var(--text-muted);
@@ -304,6 +317,19 @@ input, textarea {
 
 .file-item:hover .file-delete { opacity: 1; }
 .file-item .file-delete:hover { background: rgba(248, 81, 73, 0.15); }
+
+.file-rename-input {
+  flex: 1;
+  background: var(--bg-editor);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  outline: none;
+  min-width: 0;
+}
 
 /* ── Editor panel ─────────────────────────────────────────────────────────── */
 .editor-panel {
@@ -447,6 +473,129 @@ input, textarea {
 }
 
 .btn-ghost:hover { background: var(--bg-sidebar-hover); color: var(--text); }
+
+/* ── Share button ─────────────────────────────────────────────────────────── */
+.btn-share {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+/* ── Share modal ──────────────────────────────────────────────────────────── */
+.share-modal { max-width: 500px; }
+
+.share-member-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  min-height: 48px;
+}
+
+.share-member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.share-member-row:last-child { border-bottom: none; }
+
+.share-member-info {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.share-member-name {
+  font-size: 13px;
+  color: var(--text-heading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-member-email {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-role-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.share-role-badge.owner {
+  background: rgba(79, 189, 186, 0.15);
+  color: var(--accent);
+}
+
+.share-role-select {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.share-role-select:focus { outline: none; border-color: var(--accent); }
+
+.share-remove-btn {
+  background: none;
+  color: var(--text-muted);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.1s, background 0.1s;
+}
+.share-remove-btn:hover { color: var(--error); background: rgba(248,81,73,0.1); }
+
+.share-invite-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.share-invite-input {
+  flex: 1;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 10px;
+  outline: none;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+.share-invite-input:focus { border-color: var(--accent); }
+.share-invite-input::placeholder { color: var(--text-muted); }
+
+.share-error {
+  font-size: 12px;
+  color: var(--error);
+  margin-top: 6px;
+}
+
+.share-empty {
+  padding: 14px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
 
 /* ── Error log ────────────────────────────────────────────────────────────── */
 .error-log-panel {

@@ -216,6 +216,190 @@ describe("file CRUD", () => {
   });
 });
 
+// ── Members ───────────────────────────────────────────────────────────────────
+
+describe("members", () => {
+  // Register a second user (bob) so invite-by-email tests have a target.
+  let bobJwt: string;
+  let projectId: string;
+
+  beforeAll(async () => {
+    bobJwt = await signJwt(
+      testClaims({ sub: "sso-bob-001", email: "bob@example.com", name: "Bob Test" }),
+      pair,
+    );
+    // Create the bob user record in D1 by calling /api/me as him.
+    await SELF.fetch(
+      new Request("https://worker.test/api/me", {
+        headers: { "Cf-Access-Jwt-Assertion": bobJwt },
+      }),
+    );
+
+    // Alice creates a project for member tests.
+    const res = await SELF.fetch(req("POST", "/api/projects", { name: "Member Test Project" }));
+    projectId = (await json<{ id: string }>(res)).id;
+  });
+
+  it("GET /members returns the owner", async () => {
+    const res = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    expect(res.status).toBe(200);
+    const members = await json<{ role: string; email: string }[]>(res);
+    expect(members).toHaveLength(1);
+    expect(members[0].role).toBe("owner");
+    expect(members[0].email).toBe("alice@example.com");
+  });
+
+  it("POST /members returns 400 when email is missing", async () => {
+    const res = await SELF.fetch(req("POST", `/api/projects/${projectId}/members`, { role: "editor" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /members returns 400 for invalid role", async () => {
+    const res = await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "bob@example.com", role: "admin" }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /members returns 404 for unknown email", async () => {
+    const res = await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "nobody@example.com", role: "editor" }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("invites bob, verifies presence, then returns 409 on duplicate invite", async () => {
+    // First invite: success
+    const first = await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "bob@example.com", role: "editor" }),
+    );
+    expect(first.status).toBe(204);
+
+    // Verify bob appears in the list
+    const listRes = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    const members = await json<{ role: string; email: string }[]>(listRes);
+    expect(members).toHaveLength(2);
+    expect(members.find((m) => m.email === "bob@example.com")?.role).toBe("editor");
+
+    // Second invite: conflict
+    const dup = await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "bob@example.com", role: "viewer" }),
+    );
+    expect(dup.status).toBe(409);
+  });
+
+  it("POST /members returns 403 for non-owner (bob as editor cannot invite)", async () => {
+    // Alice invites bob first so bob has access to the project
+    await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "bob@example.com", role: "editor" }),
+    );
+
+    // Register carol
+    const carolJwt = await signJwt(
+      testClaims({ sub: "sso-carol-001", email: "carol@example.com", name: "Carol Test" }),
+      pair,
+    );
+    await SELF.fetch(new Request("https://worker.test/api/me", {
+      headers: { "Cf-Access-Jwt-Assertion": carolJwt },
+    }));
+
+    // Bob (editor) tries to invite carol — should be forbidden
+    const res = await SELF.fetch(
+      new Request(`https://worker.test/api/projects/${projectId}/members`, {
+        method: "POST",
+        headers: { "Cf-Access-Jwt-Assertion": bobJwt, "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "carol@example.com", role: "viewer" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("PATCH changes bob's role to viewer; non-owner gets 403", async () => {
+    // Set up: invite bob
+    await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "bob@example.com", role: "editor" }),
+    );
+    const listRes = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    const members = await json<{ user_id: string; email: string }[]>(listRes);
+    const bob = members.find((m) => m.email === "bob@example.com")!;
+
+    // Alice (owner) changes bob's role to viewer
+    const patchRes = await SELF.fetch(
+      req("PATCH", `/api/projects/${projectId}/members/${bob.user_id}`, { role: "viewer" }),
+    );
+    expect(patchRes.status).toBe(204);
+
+    const updated = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    const after = await json<{ email: string; role: string }[]>(updated);
+    expect(after.find((m) => m.email === "bob@example.com")?.role).toBe("viewer");
+
+    // Bob (viewer) tries to change his own role — should be forbidden
+    const forbidRes = await SELF.fetch(
+      new Request(`https://worker.test/api/projects/${projectId}/members/${bob.user_id}`, {
+        method: "PATCH",
+        headers: { "Cf-Access-Jwt-Assertion": bobJwt, "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "editor" }),
+      }),
+    );
+    expect(forbidRes.status).toBe(403);
+  });
+
+  it("DELETE removes bob from the project", async () => {
+    // Set up: invite bob
+    await SELF.fetch(
+      req("POST", `/api/projects/${projectId}/members`, { email: "bob@example.com", role: "editor" }),
+    );
+    const listRes = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    const members = await json<{ user_id: string; email: string }[]>(listRes);
+    const bob = members.find((m) => m.email === "bob@example.com")!;
+
+    const delRes = await SELF.fetch(req("DELETE", `/api/projects/${projectId}/members/${bob.user_id}`));
+    expect(delRes.status).toBe(204);
+
+    const afterDel = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    const remaining = await json<{ email: string }[]>(afterDel);
+    expect(remaining.find((m) => m.email === "bob@example.com")).toBeUndefined();
+  });
+
+  it("cannot modify the project owner via PATCH", async () => {
+    const listRes = await SELF.fetch(req("GET", `/api/projects/${projectId}/members`));
+    const members = await json<{ user_id: string; role: string }[]>(listRes);
+    const owner = members.find((m) => m.role === "owner")!;
+
+    const res = await SELF.fetch(
+      req("PATCH", `/api/projects/${projectId}/members/${owner.user_id}`, { role: "editor" }),
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+// ── Yjs snapshot ──────────────────────────────────────────────────────────────
+
+describe("GET /yjs/:name", () => {
+  it("returns 404 when no snapshot exists", async () => {
+    const createRes = await SELF.fetch(req("POST", "/api/projects", { name: "Yjs Test" }));
+    const { id } = await json<{ id: string }>(createRes);
+
+    const res = await SELF.fetch(req("GET", `/api/projects/${id}/yjs/main.tex`));
+    expect(res.status).toBe(404);
+  });
+
+  it("returns the snapshot bytes when it exists", async () => {
+    const createRes = await SELF.fetch(req("POST", "/api/projects", { name: "Yjs Snapshot" }));
+    const { id } = await json<{ id: string }>(createRes);
+
+    // Manually put a fake snapshot into R2 via the storage key convention
+    const { env } = await import("cloudflare:test");
+    await env.STORAGE.put(`projects/${id}/yjs/main.tex.bin`, new Uint8Array([1, 2, 3, 4]));
+
+    const res = await SELF.fetch(req("GET", `/api/projects/${id}/yjs/main.tex`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(body).toEqual(new Uint8Array([1, 2, 3, 4]));
+  });
+});
+
 // ── Output PDF ────────────────────────────────────────────────────────────────
 
 describe("output.pdf", () => {

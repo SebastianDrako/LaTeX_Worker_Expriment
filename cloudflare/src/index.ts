@@ -1,12 +1,19 @@
 import { validateJwt } from "./auth";
 import {
+  addProjectMember,
   createProject,
   deleteFile,
   deleteProject,
+  findUserByEmail,
   getMemberRole,
   getProject,
   getProjectFiles,
+  getProjectMembers,
   getUserProjects,
+  removeProjectMember,
+  renameFile,
+  renameProject,
+  updateMemberRole,
   updateProjectTimestamp,
   upsertFile,
   upsertUser,
@@ -17,6 +24,7 @@ import {
   fileTypeFromName,
   outputPdfKey,
   r2KeyForSourceFile,
+  yjsSnapshotKey,
 } from "./storage";
 
 export { ProjectRoom } from "./do/ProjectRoom";
@@ -106,16 +114,88 @@ export default {
       return json({ ...project, role, files });
     }
 
+    // ── PATCH /api/projects/:id — { name } ─────────────────────────────────
+    if (rest === "" && method === "PATCH") {
+      if (role !== "owner") return err("Forbidden", 403);
+      const body = (await request.json()) as { name?: string };
+      if (!body.name?.trim()) return err("name is required", 400);
+      await renameProject(env.DB, projectId, body.name.trim());
+      return new Response(null, { status: 204 });
+    }
+
     // ── DELETE /api/projects/:id ────────────────────────────────────────────
     if (rest === "" && method === "DELETE") {
       if (role !== "owner") return err("Forbidden", 403);
       const files = await getProjectFiles(env.DB, projectId);
-      await Promise.all([
-        ...files.map((f) => env.STORAGE.delete(f.r2_key)),
-        env.STORAGE.delete(outputPdfKey(projectId)),
-        deleteProject(env.DB, projectId),
-      ]);
+
+      const r2KeysToDelete = [
+        ...files.map((f) => f.r2_key),
+        ...files.map((f) => yjsSnapshotKey(projectId, f.name)),
+        outputPdfKey(projectId),
+      ];
+
+      const results = await Promise.allSettled(
+        r2KeysToDelete.map((key) => env.STORAGE.delete(key)),
+      );
+
+      for (const result of results) {
+        if (result.status === "rejected") {
+          // In a real app, this would go to a proper logging service.
+          console.error(`Failed to delete R2 object: ${result.reason}`);
+        }
+      }
+
+      // Always attempt to delete the database records, even if R2 cleanup fails.
+      await deleteProject(env.DB, projectId);
+
       return new Response(null, { status: 204 });
+    }
+
+    // ── GET /api/projects/:id/members ───────────────────────────────────────
+    if (rest === "/members" && method === "GET") {
+      return json(await getProjectMembers(env.DB, projectId));
+    }
+
+    // ── POST /api/projects/:id/members — { email, role } ────────────────────
+    if (rest === "/members" && method === "POST") {
+      if (role !== "owner") return err("Forbidden", 403);
+      const body = (await request.json()) as { email?: string; role?: string };
+      if (!body.email?.trim()) return err("email is required", 400);
+      if (body.role !== "editor" && body.role !== "viewer")
+        return err("role must be 'editor' or 'viewer'", 400);
+
+      const target = await findUserByEmail(env.DB, body.email.trim());
+      if (!target) return err("User not found. Ask them to log in first.", 404);
+
+      const existing = await getMemberRole(env.DB, projectId, target.id);
+      if (existing) return err("User is already a member", 409);
+
+      await addProjectMember(env.DB, projectId, target.id, body.role);
+      return new Response(null, { status: 204 });
+    }
+
+    // ── /api/projects/:id/members/:userId ───────────────────────────────────
+    const memberMatch = rest.match(/^\/members\/([^/]+)$/);
+    if (memberMatch) {
+      if (role !== "owner") return err("Forbidden", 403);
+      const targetId = memberMatch[1];
+
+      const targetRole = await getMemberRole(env.DB, projectId, targetId);
+      if (!targetRole) return err("Member not found", 404);
+      if (targetRole === "owner") return err("Cannot modify the project owner", 400);
+
+      if (method === "PATCH") {
+        const body = (await request.json()) as { role?: string };
+        if (body.role !== "editor" && body.role !== "viewer")
+          return err("role must be 'editor' or 'viewer'", 400);
+        await updateMemberRole(env.DB, projectId, targetId, body.role);
+        return new Response(null, { status: 204 });
+      }
+
+      if (method === "DELETE") {
+        await removeProjectMember(env.DB, projectId, targetId);
+        return new Response(null, { status: 204 });
+      }
     }
 
     // ── GET /api/projects/:id/files ─────────────────────────────────────────
@@ -134,7 +214,7 @@ export default {
         const obj = await env.STORAGE.get(r2Key);
         if (!obj) return err("File not found", 404);
         return new Response(obj.body, {
-          headers: { "Content-Type": contentTypeFor(fileType) },
+          headers: { "Content-Type": contentTypeFor(fileName, fileType) },
         });
       }
 
@@ -155,6 +235,43 @@ export default {
         });
         await updateProjectTimestamp(env.DB, projectId);
         return json(file);
+      }
+
+      if (method === "PATCH") {
+        if (!canWrite) return err("Forbidden", 403);
+        const body = (await request.json()) as { newName?: string };
+        if (!body.newName?.trim()) return err("newName is required", 400);
+        const newName = body.newName.trim();
+        if (newName === fileName) return new Response(null, { status: 204 });
+
+        // Check the target name is not already taken
+        const existingFiles = await getProjectFiles(env.DB, projectId);
+        if (existingFiles.some((f) => f.name === newName)) {
+          return err("A file with that name already exists", 409);
+        }
+
+        const fileType = fileTypeFromName(newName);
+        const newR2Key = r2KeyForSourceFile(projectId, newName, fileType);
+
+        // R2 has no native rename — copy then delete.
+        const obj = await env.STORAGE.get(r2KeyForSourceFile(projectId, fileName, fileTypeFromName(fileName)));
+        if (!obj) return err("File not found", 404);
+        await env.STORAGE.put(newR2Key, obj.body);
+
+        // Also copy the Yjs snapshot if one exists for the old name.
+        const oldYjsKey = yjsSnapshotKey(projectId, fileName);
+        const newYjsKey = yjsSnapshotKey(projectId, newName);
+        const yjsObj = await env.STORAGE.get(oldYjsKey);
+        if (yjsObj) {
+          await env.STORAGE.put(newYjsKey, yjsObj.body);
+          await env.STORAGE.delete(oldYjsKey);
+        }
+
+        const oldR2Key = await renameFile(env.DB, projectId, fileName, newName, newR2Key);
+        if (oldR2Key) await env.STORAGE.delete(oldR2Key);
+
+        await updateProjectTimestamp(env.DB, projectId);
+        return new Response(null, { status: 204 });
       }
 
       if (method === "DELETE") {
@@ -195,12 +312,28 @@ export default {
       return new Response(null, { status: 204 });
     }
 
+    // ── GET /api/projects/:id/yjs/:name ────────────────────────────────────
+    // Serve the Yjs CRDT snapshot for a file so new clients can bootstrap
+    // from the full collaborative state instead of plain text.
+    const yjsMatch = rest.match(/^\/yjs\/(.+)$/);
+    if (yjsMatch && method === "GET") {
+      const fileName = decodeURIComponent(yjsMatch[1]);
+      const obj = await env.STORAGE.get(yjsSnapshotKey(projectId, fileName));
+      if (!obj) return err("No snapshot yet", 404);
+      return new Response(obj.body, {
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+    }
+
     // ── GET /api/projects/:id/ws ────────────────────────────────────────────
     // Upgrade to WebSocket; the Durable Object manages the connection.
+    // Pass project and file as query params so the DO can track per-file Y.Docs.
     if (rest === "/ws" && method === "GET") {
-      return roomFor(env, projectId).fetch(
-        new Request("https://do/ws", request),
-      );
+      const fileName = url.searchParams.get("file") ?? "main.tex";
+      const doUrl = new URL("https://do/ws");
+      doUrl.searchParams.set("project", projectId);
+      doUrl.searchParams.set("file", fileName);
+      return roomFor(env, projectId).fetch(new Request(doUrl.toString(), request));
     }
 
     return err("Not found", 404);

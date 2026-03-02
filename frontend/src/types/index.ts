@@ -31,6 +31,13 @@ export interface ProjectFile {
   updated_by: string;
 }
 
+export interface Member {
+  user_id: string;
+  role: "owner" | "editor" | "viewer";
+  name: string;
+  email: string;
+}
+
 export type CompileStatus = "idle" | "compiling" | "success" | "error";
 
 export interface CompileError {

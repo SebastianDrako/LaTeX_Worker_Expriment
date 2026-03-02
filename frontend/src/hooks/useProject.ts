@@ -3,6 +3,8 @@ import {
   deleteFile as apiDeleteFile,
   getProject,
   listFiles,
+  renameFile as apiRenameFile,
+  renameProject as apiRenameProject,
   uploadFile as apiUploadFile,
 } from "../api/client";
 import type { ProjectDetail, ProjectFile } from "../types";
@@ -51,7 +53,26 @@ export function useProject(projectId: string | null) {
     [projectId],
   );
 
-  return { project, loading, error, reload, uploadFile, deleteFile };
+  const renameFile = useCallback(
+    async (oldName: string, newName: string) => {
+      if (!projectId) return;
+      await apiRenameFile(projectId, oldName, newName);
+      const files = await listFiles(projectId);
+      setProject((p) => (p ? { ...p, files } : null));
+    },
+    [projectId],
+  );
+
+  const renameProjectName = useCallback(
+    async (newName: string) => {
+      if (!projectId) return;
+      await apiRenameProject(projectId, newName);
+      setProject((p) => (p ? { ...p, name: newName } : null));
+    },
+    [projectId],
+  );
+
+  return { project, loading, error, reload, uploadFile, deleteFile, renameFile, renameProjectName };
 }
 
 export function useSelectedFile(files: ProjectFile[]) {

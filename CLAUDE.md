@@ -335,18 +335,33 @@ Construir el **core Rust** mínimo:
 
 ### Build & run
 
+> **OpenSUSE Tumbleweed note:** The system ICU headers (75+) use C++20 `auto` template
+> parameters, but `tectonic_xetex_layout` compiles with `-std=c++14`. Work around this with a
+> compiler wrapper that upgrades the standard:
+> ```bash
+> mkdir -p /tmp/cxx-wrapper
+> cat > /tmp/cxx-wrapper/c++ << 'EOF'
+> #!/bin/bash
+> args=(); for arg in "$@"; do
+>   [ "$arg" = "-std=c++14" ] && args+=("-std=c++17") || args+=("$arg")
+> done; exec /usr/bin/c++ "${args[@]}"
+> EOF
+> chmod +x /tmp/cxx-wrapper/c++
+> ```
+> Then prefix all `cargo` commands with `CXX=/tmp/cxx-wrapper/c++`.
+
 ```bash
 cd daemon
 
 # Development
-cargo run
+CXX=/tmp/cxx-wrapper/c++ cargo run
 
 # Production binary
-cargo build --release
+CXX=/tmp/cxx-wrapper/c++ cargo build --release
 # → target/release/latex-daemon
 
 # Override default port (7878)
-PORT=9000 cargo run
+PORT=9000 CXX=/tmp/cxx-wrapper/c++ cargo run
 ```
 
 ### Tests
@@ -355,13 +370,13 @@ PORT=9000 cargo run
 cd daemon
 
 # Run all tests (unit + integration)
-cargo test
+CXX=/tmp/cxx-wrapper/c++ cargo test
 
 # Run a specific test by name
-cargo test looks_binary
+CXX=/tmp/cxx-wrapper/c++ cargo test looks_binary
 
 # Show stdout from passing tests (useful for debugging)
-cargo test -- --nocapture
+CXX=/tmp/cxx-wrapper/c++ cargo test -- --nocapture
 ```
 
 #### Test inventory
@@ -373,8 +388,9 @@ cargo test -- --nocapture
 | `binary_detection_is_case_insensitive` | Extension matching is case-insensitive |
 | `compile_empty_body_returns_400` | Empty JSON body → HTTP 400 |
 | `compile_invalid_json_returns_400` | Malformed JSON → HTTP 400 |
-| `compile_missing_main_field_returns_400` | Missing `main` field → HTTP 400 |
+| `compile_missing_main_field_returns_422` | Missing `main` field → HTTP 422 (axum 0.7 JSON extraction) |
 | `compile_invalid_latex_returns_json_error` | Bad LaTeX → non-200 with `{ error, log }` JSON |
+| `cors_preflight_returns_allow_origin` | OPTIONS preflight → `access-control-allow-origin: *` |
 | `ws_receives_pdf_updated_after_broadcast` | WS client receives `{"event":"pdf_updated"}` after compile |
 | `ws_closes_cleanly_when_client_disconnects` | Dropping client doesn't panic the server |
 

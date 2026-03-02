@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { getFileContent, uploadFile } from "../../api/client";
+import { useAuth } from "../../hooks/useAuth";
 import { useCompile } from "../../hooks/useCompile";
 import { usePdfReload } from "../../hooks/usePdfReload";
 import { useProject, useSelectedFile } from "../../hooks/useProject";
@@ -8,6 +9,7 @@ import type { Project } from "../../types";
 import { CodeEditor } from "./CodeEditor";
 import { FileTree } from "./FileTree";
 import { PdfViewer } from "./PdfViewer";
+import { ShareModal } from "./ShareModal";
 import { Toolbar } from "./Toolbar";
 
 interface Props {
@@ -16,11 +18,15 @@ interface Props {
 }
 
 export function EditorView({ project, onBack }: Props) {
-  const { project: detail, uploadFile: doUpload, deleteFile } = useProject(project.id);
+  const auth = useAuth();
+  const userName = auth.status === "authenticated" ? auth.user.name : "Anonymous";
+
+  const { project: detail, uploadFile: doUpload, deleteFile, renameFile, renameProjectName } = useProject(project.id);
   const { selectedFile, setSelectedFile } = useSelectedFile(detail?.files ?? []);
 
   const [fileContent, setFileContent] = useState<string>("");
   const [pdfReload, setPdfReload] = useState(0);
+  const [showShare, setShowShare] = useState(false);
 
   const { status, errorLog, compile } = useCompile(project.id);
   const canWrite = detail?.role === "owner" || detail?.role === "editor";
@@ -79,10 +85,13 @@ export function EditorView({ project, onBack }: Props) {
   return (
     <div className="editor-layout">
       <Toolbar
-        projectName={project.name}
+        projectName={detail?.name ?? project.name}
         status={status}
+        isOwner={detail?.role === "owner"}
         onCompile={() => void compile()}
         onBack={onBack}
+        onShare={() => setShowShare(true)}
+        onRenameProject={renameProjectName}
       />
 
       <div className="main-area">
@@ -96,6 +105,7 @@ export function EditorView({ project, onBack }: Props) {
               onSelect={setSelectedFile}
               onUpload={doUpload}
               onDelete={deleteFile}
+              onRename={renameFile}
             />
           </Panel>
 
@@ -108,6 +118,7 @@ export function EditorView({ project, onBack }: Props) {
                 projectId={project.id}
                 fileName={selectedFile.name}
                 initialContent={fileContent}
+                userName={userName}
                 onChange={handleContentChange}
               />
             ) : (
@@ -132,7 +143,7 @@ export function EditorView({ project, onBack }: Props) {
 
           {/* PDF viewer */}
           <Panel defaultSize={41} minSize={20}>
-            <PdfViewer projectId={project.id} reloadSignal={pdfReload} />
+            <PdfViewer projectId={project.id} projectName={project.name} reloadSignal={pdfReload} />
           </Panel>
         </PanelGroup>
       </div>
@@ -140,6 +151,15 @@ export function EditorView({ project, onBack }: Props) {
       {/* Error log panel */}
       {status === "error" && errorLog && (
         <div className="error-log-panel">{errorLog}</div>
+      )}
+
+      {/* Share modal */}
+      {showShare && (
+        <ShareModal
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setShowShare(false)}
+        />
       )}
     </div>
   );

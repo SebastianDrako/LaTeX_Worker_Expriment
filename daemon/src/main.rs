@@ -10,8 +10,9 @@ use axum::{
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
+use tower_http::cors::CorsLayer;
 
 #[derive(Clone)]
 struct AppState {
@@ -32,17 +33,26 @@ struct CompileError {
 }
 
 async fn compile(State(state): State<AppState>, Json(req): Json<CompileRequest>) -> Response {
-    match tokio::task::spawn_blocking(move || run_tectonic(req)).await {
-        Ok(Ok(pdf)) => {
+    let task = tokio::task::spawn_blocking(move || run_tectonic(req));
+    match tokio::time::timeout(Duration::from_secs(30), task).await {
+        Err(_elapsed) => (
+            StatusCode::REQUEST_TIMEOUT,
+            Json(CompileError {
+                error: "compile_timeout",
+                log: "Compilation timed out after 30 seconds.".to_string(),
+            }),
+        )
+            .into_response(),
+        Ok(Ok(Ok(pdf))) => {
             let _ = state.tx.send(());
             (StatusCode::OK, [("content-type", "application/pdf")], pdf).into_response()
         }
-        Ok(Err(log)) => (
+        Ok(Ok(Err(log))) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(CompileError { error: "compilation_failed", log }),
         )
             .into_response(),
-        Err(e) => (
+        Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(CompileError { error: "internal_error", log: e.to_string() }),
         )
@@ -71,6 +81,7 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<()>) {
 }
 
 fn run_tectonic(req: CompileRequest) -> Result<Vec<u8>, String> {
+    use std::path::{Component, Path};
     use tectonic::{
         config::PersistentConfig,
         driver::{OutputFormat, PassSetting, ProcessingSessionBuilder},
@@ -83,7 +94,12 @@ fn run_tectonic(req: CompileRequest) -> Result<Vec<u8>, String> {
     let work_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
 
     for (name, content) in &req.assets {
-        let dest = work_dir.path().join(name);
+        let path = Path::new(name);
+        if path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir)) {
+            return Err(format!("Invalid asset path (path traversal attempt denied): {name}"));
+        }
+
+        let dest = work_dir.path().join(path);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -145,6 +161,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::broadcast;
     use tower::ServiceExt;
+    use tower_http::cors::CorsLayer;
 
     fn make_app() -> (Router, Arc<broadcast::Sender<()>>) {
         let (tx, _) = broadcast::channel::<()>(16);
@@ -153,6 +170,7 @@ mod tests {
         let app = Router::new()
             .route("/compile", post(compile))
             .route("/ws", get(ws_handler))
+            .layer(CorsLayer::permissive())
             .with_state(state);
         (app, tx)
     }
@@ -217,7 +235,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compile_missing_main_field_returns_400() {
+    async fn compile_missing_main_field_returns_422() {
         let (app, _) = make_app();
         let res = app
             .oneshot(
@@ -230,10 +248,41 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // axum 0.7 returns 422 Unprocessable Entity for missing required JSON fields
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     // ── HTTP: error response shape ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn compile_path_traversal_returns_error() {
+        let (app, _) = make_app();
+        let body = r#"
+        {
+            "main": "doc",
+            "assets": {
+                "../../foo.txt": "bar"
+            }
+        }
+        "#;
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/compile")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(val["error"], "compilation_failed");
+        assert!(val["log"].as_str().unwrap().contains("path traversal attempt denied"));
+    }
 
     /// Tectonic must return a structured JSON error for invalid LaTeX.
     /// If the bundle is unreachable (CI/offline), the internal error path also
@@ -291,6 +340,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cors_preflight_returns_allow_origin() {
+        let (app, _) = make_app();
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/compile")
+                    .header("origin", "http://localhost:5173")
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            res.headers().contains_key("access-control-allow-origin"),
+            "CORS header missing from preflight response",
+        );
+    }
+
+    #[tokio::test]
     async fn ws_closes_cleanly_when_client_disconnects() {
         let (app, tx) = make_app();
 
@@ -325,6 +396,7 @@ async fn main() {
     let app = Router::new()
         .route("/compile", post(compile))
         .route("/ws", get(ws_handler))
+        .layer(CorsLayer::permissive())
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await

@@ -1,4 +1,4 @@
-import type { Project, ProjectDetail, ProjectFile, User } from "../types";
+import type { Member, Project, ProjectDetail, ProjectFile, User } from "../types";
 
 const BASE = import.meta.env.VITE_WORKER_URL ?? "";
 
@@ -42,6 +42,15 @@ export async function getProject(projectId: string): Promise<ProjectDetail> {
 
 export async function deleteProject(projectId: string): Promise<void> {
   const res = await apiFetch(`/api/projects/${projectId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function renameProject(projectId: string, newName: string): Promise<void> {
+  const res = await apiFetch(`/api/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: newName }),
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
@@ -100,6 +109,25 @@ export async function deleteFile(
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
+export async function renameFile(
+  projectId: string,
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  const res = await apiFetch(
+    `/api/projects/${projectId}/files/${encodeURIComponent(oldName)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newName }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+}
+
 // ── PDF ───────────────────────────────────────────────────────────────────────
 
 export async function getOutputPdf(projectId: string): Promise<ArrayBuffer> {
@@ -120,10 +148,78 @@ export async function uploadOutputPdf(
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
+// ── Members ───────────────────────────────────────────────────────────────────
+
+export async function getMembers(projectId: string): Promise<Member[]> {
+  return apiJSON<Member[]>(`/api/projects/${projectId}/members`);
+}
+
+export async function addMember(
+  projectId: string,
+  email: string,
+  role: "editor" | "viewer",
+): Promise<void> {
+  const res = await apiFetch(`/api/projects/${projectId}/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+}
+
+export async function updateMemberRole(
+  projectId: string,
+  userId: string,
+  role: "editor" | "viewer",
+): Promise<void> {
+  const res = await apiFetch(`/api/projects/${projectId}/members/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function removeMember(projectId: string, userId: string): Promise<void> {
+  const res = await apiFetch(`/api/projects/${projectId}/members/${userId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+// ── Yjs snapshot ──────────────────────────────────────────────────────────────
+
+/**
+ * Fetches the persisted Yjs CRDT snapshot for a file.
+ * Returns null if no snapshot exists yet (first session or file never edited
+ * collaboratively). Errors from the network are propagated as exceptions.
+ */
+export async function fetchYjsSnapshot(
+  projectId: string,
+  fileName: string,
+): Promise<Uint8Array | null> {
+  const res = await apiFetch(
+    `/api/projects/${projectId}/yjs/${encodeURIComponent(fileName)}`,
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 // ── WebSocket URL helper ───────────────────────────────────────────────────────
 
-export function wsUrl(projectId: string): string {
+/**
+ * Builds the WebSocket URL for the project room.
+ * Pass `fileName` when the connection is used for Yjs collaboration so the
+ * Durable Object can track the Y.Doc per file. Omit it for notification-only
+ * connections (e.g. usePdfReload).
+ */
+export function wsUrl(projectId: string, fileName?: string): string {
   const workerUrl = import.meta.env.VITE_WORKER_URL ?? "";
   const base = workerUrl.replace(/^http/, "ws") || `ws://${location.host}`;
-  return `${base}/api/projects/${projectId}/ws`;
+  const url = `${base}/api/projects/${projectId}/ws`;
+  return fileName ? `${url}?file=${encodeURIComponent(fileName)}` : url;
 }

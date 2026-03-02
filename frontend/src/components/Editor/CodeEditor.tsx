@@ -19,8 +19,9 @@ import {
 import { useEffect, useRef } from "react";
 import * as Y from "yjs";
 import { yCollab } from "y-codemirror.next";
-import { Awareness } from "y-protocols/awareness";
-import { wsUrl } from "../../api/client";
+import { Awareness, encodeAwarenessUpdate } from "y-protocols/awareness"; // Import encodeAwarenessUpdate
+import { fetchYjsSnapshot, wsUrl } from "../../api/client";
+import { RobustWebSocket } from "../../api/websocket"; // Import RobustWebSocket
 
 // ── Custom LaTeX StreamLanguage ───────────────────────────────────────────────
 // Provides syntax highlighting without an external grammar package.
@@ -72,34 +73,74 @@ const latexLanguage = StreamLanguage.define<{ inMath: boolean }>({
   },
 });
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Generates a deterministic HSL color from a string (used for cursor colours). */
+function colorFromName(name: string): string {
+  let hash = 0;
+  for (const ch of name) hash = Math.imul(31, hash) + ch.charCodeAt(0);
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 60%)`;
+}
+
 // ── Yjs collaboration setup ───────────────────────────────────────────────────
 
-function createYjsExtensions(projectId: string, docName: string) {
+function createYjsExtensions(
+  projectId: string,
+  docName: string,
+  snapshot: Uint8Array | null,
+  initialContent: string,
+  userName: string,
+) {
   const ydoc = new Y.Doc();
+
+  if (snapshot) {
+    Y.applyUpdate(ydoc, snapshot);
+  }
+
   const ytext = ydoc.getText(docName);
   const awareness = new Awareness(ydoc);
 
-  const ws = new WebSocket(wsUrl(projectId));
-  ws.binaryType = "arraybuffer";
+  const color = colorFromName(userName);
+  awareness.setLocalStateField("user", {
+    name: userName,
+    color,
+    colorLight: color.replace("60%)", "80%)"),
+  });
+
+  if (ytext.length === 0 && initialContent) {
+    ydoc.transact(() => {
+      ytext.insert(0, initialContent);
+    }, "remote");
+  }
+
+  const ws = new RobustWebSocket(wsUrl(projectId, docName));
 
   ws.onopen = () => {
-    // Send our initial state so other peers can sync
+    // On connect or reconnect, send our current state to sync with peers.
     const stateUpdate = Y.encodeStateAsUpdate(ydoc);
-    ws.send(stateUpdate);
+    ws.send(stateUpdate as unknown as ArrayBuffer); // Cast via unknown
+    // Also broadcast our awareness state.
+    const awarenessUpdate = encodeAwarenessUpdate(awareness, [ydoc.clientID]);
+    ws.send(awarenessUpdate as unknown as ArrayBuffer); // Cast via unknown
   };
 
   ws.onmessage = (event) => {
     if (event.data instanceof ArrayBuffer) {
-      Y.applyUpdate(ydoc, new Uint8Array(event.data));
+      Y.applyUpdate(ydoc, new Uint8Array(event.data), "remote");
     }
     // text (JSON) messages are for PDF notifications, not Yjs — ignore here
   };
 
   ydoc.on("update", (update: Uint8Array, origin: unknown) => {
-    if (origin === "remote") return;
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(update);
+    if (origin !== "remote") {
+      ws.send(update as unknown as ArrayBuffer); // Cast via unknown
     }
+  });
+
+  awareness.on("update", (update: { added: number[], updated: number[], removed: number[] }) => {
+    const awarenessUpdate = encodeAwarenessUpdate(awareness, Object.keys(update).flatMap(key => update[key as keyof typeof update]));
+    ws.send(awarenessUpdate as unknown as ArrayBuffer); // Cast via unknown
   });
 
   const cleanup = () => {
@@ -117,10 +158,11 @@ interface Props {
   projectId: string;
   fileName: string;
   initialContent: string;
+  userName: string;
   onChange?: (content: string) => void;
 }
 
-export function CodeEditor({ projectId, fileName, initialContent, onChange }: Props) {
+export function CodeEditor({ projectId, fileName, initialContent, userName, onChange }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -128,63 +170,80 @@ export function CodeEditor({ projectId, fileName, initialContent, onChange }: Pr
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Destroy previous editor if switching files
+    // Destroy previous editor instance when switching files.
     viewRef.current?.destroy();
+    viewRef.current = null;
     cleanupRef.current?.();
+    cleanupRef.current = null;
 
-    const { ytext, awareness, cleanup, ydoc } = createYjsExtensions(projectId, fileName);
-    cleanupRef.current = cleanup;
+    // Capture values for the async init closure.
+    const container = containerRef.current;
+    const capturedContent = initialContent;
+    let cancelled = false;
 
-    // Bootstrap the Yjs text with the initial content from R2 (only if the
-    // document is empty — prevents overwriting changes from other peers).
-    ydoc.transact(() => {
-      if (ytext.length === 0 && initialContent) {
-        ytext.insert(0, initialContent);
-      }
-    }, "remote"); // mark as remote so we don't broadcast back
+    async function init() {
+      // Fetch the persisted Yjs snapshot before opening the WebSocket.
+      // On error (network down, etc.) fall back gracefully to plain text.
+      const snapshot = await fetchYjsSnapshot(projectId, fileName).catch(() => null);
+      if (cancelled || !container) return;
 
-    const updateListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged && onChange) {
-        onChange(update.state.doc.toString());
-      }
-    });
+      const { ytext, awareness, cleanup } = createYjsExtensions(
+        projectId,
+        fileName,
+        snapshot,
+        capturedContent,
+        userName,
+      );
+      cleanupRef.current = cleanup;
 
-    const state = EditorState.create({
-      doc: ytext.toString(),
-      extensions: [
-        lineNumbers(),
-        highlightActiveLineGutter(),
-        highlightActiveLine(),
-        history(),
-        drawSelection(),
-        indentOnInput(),
-        bracketMatching(),
-        closeBrackets(),
-        autocompletion(),
-        search({ top: true }),
-        latexLanguage,
-        oneDark,
-        keymap.of([
-          indentWithTab,
-          ...defaultKeymap,
-          ...historyKeymap,
-          ...searchKeymap,
-        ]),
-        yCollab(ytext, awareness),
-        updateListener,
-        EditorView.theme({
-          "&": { height: "100%" },
-          ".cm-scroller": { fontFamily: "var(--font-mono)", overflow: "auto" },
-        }),
-      ],
-    });
+      const updateListener = EditorView.updateListener.of((update) => {
+        if (update.docChanged && onChange) {
+          onChange(update.state.doc.toString());
+        }
+      });
 
-    const view = new EditorView({ state, parent: containerRef.current });
-    viewRef.current = view;
+      const state = EditorState.create({
+        doc: ytext.toString(),
+        extensions: [
+          lineNumbers(),
+          highlightActiveLineGutter(),
+          highlightActiveLine(),
+          history(),
+          drawSelection(),
+          indentOnInput(),
+          bracketMatching(),
+          closeBrackets(),
+          autocompletion(),
+          search({ top: true }),
+          latexLanguage,
+          oneDark,
+          keymap.of([
+            indentWithTab,
+            ...defaultKeymap,
+            ...historyKeymap,
+            ...searchKeymap,
+          ]),
+          yCollab(ytext, awareness),
+          updateListener,
+          EditorView.theme({
+            "&": { height: "100%" },
+            ".cm-scroller": { fontFamily: "var(--font-mono)", overflow: "auto" },
+          }),
+        ],
+      });
+
+      const view = new EditorView({ state, parent: container });
+      viewRef.current = view;
+    }
+
+    void init();
 
     return () => {
-      view.destroy();
-      cleanup();
+      cancelled = true;
+      viewRef.current?.destroy();
+      viewRef.current = null;
+      cleanupRef.current?.();
+      cleanupRef.current = null;
     };
   // Re-create the editor when the project or file changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps

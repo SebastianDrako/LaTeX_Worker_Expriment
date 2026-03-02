@@ -118,6 +118,83 @@ export async function updateProjectTimestamp(db: D1Database, projectId: string):
     .run();
 }
 
+export async function renameProject(
+  db: D1Database,
+  projectId: string,
+  newName: string,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db
+    .prepare("UPDATE projects SET name = ?, updated_at = ? WHERE id = ?")
+    .bind(newName, now, projectId)
+    .run();
+}
+
+// ── Members ───────────────────────────────────────────────────────────────────
+
+export interface MemberRecord {
+  user_id: string;
+  role: "owner" | "editor" | "viewer";
+  name: string;
+  email: string;
+}
+
+export async function getProjectMembers(
+  db: D1Database,
+  projectId: string,
+): Promise<MemberRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT pm.user_id, pm.role, u.name, u.email
+       FROM project_members pm
+       JOIN users u ON u.id = pm.user_id
+       WHERE pm.project_id = ?
+       ORDER BY pm.role, u.name`,
+    )
+    .bind(projectId)
+    .all<MemberRecord>();
+  return result.results;
+}
+
+export async function findUserByEmail(db: D1Database, email: string): Promise<User | null> {
+  return db.prepare("SELECT * FROM users WHERE email = ?").bind(email).first<User>();
+}
+
+export async function addProjectMember(
+  db: D1Database,
+  projectId: string,
+  userId: string,
+  role: "editor" | "viewer",
+): Promise<void> {
+  await db
+    .prepare("INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)")
+    .bind(projectId, userId, role)
+    .run();
+}
+
+export async function updateMemberRole(
+  db: D1Database,
+  projectId: string,
+  userId: string,
+  role: "editor" | "viewer",
+): Promise<void> {
+  await db
+    .prepare("UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?")
+    .bind(role, projectId, userId)
+    .run();
+}
+
+export async function removeProjectMember(
+  db: D1Database,
+  projectId: string,
+  userId: string,
+): Promise<void> {
+  await db
+    .prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?")
+    .bind(projectId, userId)
+    .run();
+}
+
 // ── Files ─────────────────────────────────────────────────────────────────────
 
 export async function getProjectFiles(db: D1Database, projectId: string): Promise<FileRecord[]> {
@@ -152,6 +229,32 @@ export async function upsertFile(db: D1Database, file: Omit<FileRecord, "id">): 
     .bind(id, file.project_id, file.name, file.r2_key, file.type, file.size, file.updated_at, file.updated_by)
     .run();
   return { id, ...file };
+}
+
+/**
+ * Renames a file in D1 and updates its R2 key (the caller must have already
+ * copied the R2 object to the new key before calling this function).
+ * Returns the old R2 key (so the caller can delete it from R2), or null if
+ * the file was not found.
+ */
+export async function renameFile(
+  db: D1Database,
+  projectId: string,
+  oldName: string,
+  newName: string,
+  newR2Key: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT id, r2_key FROM files WHERE project_id = ? AND name = ?")
+    .bind(projectId, oldName)
+    .first<{ id: string; r2_key: string }>();
+  if (!row) return null;
+  const now = new Date().toISOString();
+  await db
+    .prepare("UPDATE files SET name = ?, r2_key = ?, updated_at = ? WHERE id = ?")
+    .bind(newName, newR2Key, now, row.id)
+    .run();
+  return row.r2_key;
 }
 
 export async function deleteFile(

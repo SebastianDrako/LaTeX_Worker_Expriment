@@ -6,29 +6,30 @@ import { env } from "cloudflare:test";
 // ── D1 schema ─────────────────────────────────────────────────────────────────
 
 // Mirror of migrations/0001_initial.sql — kept in sync manually.
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS users (
+// D1's exec() only accepts a single statement; use batch() for multiple DDL.
+const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     sso_id     TEXT NOT NULL UNIQUE,
     provider   TEXT NOT NULL,
     name       TEXT NOT NULL,
     email      TEXT NOT NULL,
     created_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS projects (
+  )`,
+  `CREATE TABLE IF NOT EXISTS projects (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
     owner_id   TEXT NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS project_members (
+  )`,
+  `CREATE TABLE IF NOT EXISTS project_members (
     project_id TEXT NOT NULL REFERENCES projects(id),
     user_id    TEXT NOT NULL REFERENCES users(id),
     role       TEXT NOT NULL CHECK(role IN ('owner', 'editor', 'viewer')),
     PRIMARY KEY (project_id, user_id)
-  );
-  CREATE TABLE IF NOT EXISTS files (
+  )`,
+  `CREATE TABLE IF NOT EXISTS files (
     id          TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL REFERENCES projects(id),
     name        TEXT NOT NULL,
@@ -38,11 +39,11 @@ const SCHEMA = `
     updated_at  TEXT NOT NULL,
     updated_by  TEXT NOT NULL REFERENCES users(id),
     UNIQUE (project_id, name)
-  );
-`;
+  )`,
+];
 
 export async function applySchema(): Promise<void> {
-  await env.DB.exec(SCHEMA);
+  await env.DB.batch(SCHEMA_STATEMENTS.map((sql) => env.DB.prepare(sql)));
 }
 
 // ── RSA key pair + JWT signing ────────────────────────────────────────────────
@@ -88,6 +89,28 @@ export async function signJwt(
     new TextEncoder().encode(input),
   );
   return `${input}.${toB64Url(sig)}`;
+}
+
+/**
+ * Tampers with the signature part of a JWT by flipping bits in the decoded
+ * binary bytes. Changing a base64url *character* is unreliable because the
+ * last character of a base64 group may carry only padding bits that atob()
+ * ignores — leaving the decoded bytes identical to the original.
+ * This function operates on the actual bytes, guaranteeing a real change.
+ */
+export function tamperJwtSignature(jwt: string): string {
+  const parts = jwt.split(".");
+  const b64 = parts[2].replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = new Uint8Array(
+    atob(b64).split("").map((c) => c.charCodeAt(0)),
+  );
+  // Flip the first byte — guaranteed to change the decoded signature.
+  bytes[0] ^= 0xff;
+  parts[2] = btoa(String.fromCharCode(...bytes))
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+  return parts.join(".");
 }
 
 /** Returns a valid, non-expired set of Access claims for the test audience. */

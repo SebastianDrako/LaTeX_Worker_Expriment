@@ -1,0 +1,22 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Build output ──────────────────────────────────────────────────────────────
+frontend/dist/
+frontend/functions/
+
+# ── TypeScript ────────────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Cloudflare / Wrangler ─────────────────────────────────────────────────────
+.wrangler/
+cloudflare/.dev.vars
+
+# ── Rust ──────────────────────────────────────────────────────────────────────
+# (daemon/target/ is covered by daemon/.gitignore)
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

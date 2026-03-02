@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { ProjectFile } from "../../types";
 
 const FILE_ICON: Record<string, string> = {
@@ -15,6 +15,7 @@ interface Props {
   onSelect: (file: ProjectFile) => void;
   onUpload: (file: File) => Promise<void>;
   onDelete: (fileName: string) => Promise<void>;
+  onRename: (oldName: string, newName: string) => Promise<void>;
 }
 
 export function FileTree({
@@ -24,8 +25,12 @@ export function FileTree({
   onSelect,
   onUpload,
   onDelete,
+  onRename,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []);
@@ -39,6 +44,21 @@ export function FileTree({
     e.stopPropagation();
     if (!confirm(`Delete "${name}"?`)) return;
     await onDelete(name);
+  };
+
+  const startRename = (e: React.MouseEvent, file: ProjectFile) => {
+    e.stopPropagation();
+    setRenamingId(file.id);
+    setRenameValue(file.name);
+    // Focus the input on next tick after render
+    setTimeout(() => renameInputRef.current?.select(), 0);
+  };
+
+  const commitRename = async (file: ProjectFile) => {
+    const newName = renameValue.trim();
+    setRenamingId(null);
+    if (!newName || newName === file.name) return;
+    await onRename(file.name, newName);
   };
 
   return (
@@ -75,16 +95,37 @@ export function FileTree({
           <div
             key={file.id}
             className={`file-item ${selectedFile?.id === file.id ? "active" : ""}`}
-            onClick={() => onSelect(file)}
+            onClick={() => renamingId !== file.id && onSelect(file)}
             role="button"
             tabIndex={0}
-            onKeyDown={(e) => e.key === "Enter" && onSelect(file)}
+            onKeyDown={(e) => e.key === "Enter" && renamingId !== file.id && onSelect(file)}
           >
             <span className="file-icon">{FILE_ICON[file.type] ?? "📄"}</span>
-            <span className="file-name" title={file.name}>
-              {file.name}
-            </span>
-            {canWrite && file.type !== "pdf" && (
+
+            {renamingId === file.id ? (
+              <input
+                ref={renameInputRef}
+                className="file-rename-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onBlur={() => void commitRename(file)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void commitRename(file); }
+                  if (e.key === "Escape") { setRenamingId(null); }
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span
+                className="file-name"
+                title={canWrite ? `${file.name} — double-click to rename` : file.name}
+                onDoubleClick={canWrite && file.type !== "pdf" ? (e) => startRename(e, file) : undefined}
+              >
+                {file.name}
+              </span>
+            )}
+
+            {canWrite && file.type !== "pdf" && renamingId !== file.id && (
               <button
                 className="file-delete"
                 title={`Delete ${file.name}`}

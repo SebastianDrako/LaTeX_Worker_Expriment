@@ -90,6 +90,10 @@ export async function validateJwt(
   const now = Math.floor(Date.now() / 1000);
   if (claims.exp < now) return null;
 
+  // Verify the issuer matches the configured team domain so tokens from
+  // other Cloudflare Access teams are rejected even if their signature is valid.
+  if (claims.iss !== `https://${teamDomain}`) return null;
+
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!audiences.includes(aud)) return null;
 

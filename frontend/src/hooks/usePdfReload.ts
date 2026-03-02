@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { wsUrl } from "../api/client";
+import { RobustWebSocket } from "../api/websocket";
 
 /**
- * Opens a WebSocket to the project room and calls `onPdfUpdated` whenever
- * the server broadcasts { event: "pdf_updated" }.
+ * Opens a WebSocket to the project room using the RobustWebSocket client
+ * and calls `onPdfUpdated` whenever the server broadcasts { event: "pdf_updated" }.
  *
- * Binary messages are relayed as-is (used by Yjs in the editor).
- * Text messages are parsed as JSON notifications.
+ * The RobustWebSocket handles reconnection logic automatically.
  */
 export function usePdfReload(
   projectId: string | null,
@@ -18,39 +18,23 @@ export function usePdfReload(
   useEffect(() => {
     if (!projectId) return;
 
-    let ws: WebSocket;
-    let closed = false;
+    const ws = new RobustWebSocket(wsUrl(projectId));
 
-    const connect = () => {
-      ws = new WebSocket(wsUrl(projectId));
-
-      ws.onmessage = (event) => {
-        if (typeof event.data === "string") {
-          try {
-            const msg = JSON.parse(event.data) as { event: string };
-            if (msg.event === "pdf_updated") cbRef.current();
-          } catch {
-            // ignore malformed messages
+    ws.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        try {
+          const msg = JSON.parse(event.data) as { event: string };
+          if (msg.event === "pdf_updated") {
+            cbRef.current();
           }
+        } catch {
+          // ignore malformed messages
         }
-        // binary messages handled by Yjs — nothing to do here
-      };
-
-      ws.onclose = () => {
-        if (!closed) {
-          // Reconnect after 3s
-          setTimeout(connect, 3000);
-        }
-      };
-
-      ws.onerror = () => ws.close();
+      }
     };
 
-    connect();
-
     return () => {
-      closed = true;
-      ws?.close();
+      ws.close();
     };
   }, [projectId]);
 }

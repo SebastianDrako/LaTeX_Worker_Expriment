@@ -100,8 +100,8 @@ LaTeX Worker is three independent components that compose cleanly:
 1. User clicks Compile (or presses Ctrl+Enter)
 2. Frontend fetches all project files from R2 via Worker API
 3. Frontend POSTs { main, assets } to http://localhost:7878/compile
-4. Tectonic compiles in-process (multi-pass + BibTeX, no temp disk files)
-5. On success → daemon returns PDF bytes
+4. Daemon writes assets to a temporary directory. Tectonic then compiles the main document in-process (multi-pass + BibTeX), reading assets from the temp dir.
+5. On success → daemon returns PDF bytes. The temp directory is cleaned up automatically.
 6. Frontend PUTs the PDF to Worker → R2 (overwrites previous)
 7. Worker calls ProjectRoom.broadcast({ event: "pdf_updated" })
 8. All connected browsers reload their PDF viewer instantly
@@ -122,7 +122,8 @@ The heart of the project. A lightweight Axum HTTP server that embeds [Tectonic](
 | `src/main.rs` | HTTP server, `/compile` handler, `/ws` WebSocket, Tectonic driver |
 
 **Key design choices:**
-- Tectonic runs **in-process** (no `pdflatex` subprocess). Faster, no PATH issues, no temp file cleanup.
+- Tectonic runs **in-process** (no `pdflatex` subprocess). Faster and avoids PATH issues. It doesn't write intermediate files like `.aux` or `.log` to disk.
+- Project assets are written to a temporary directory for each compile; this is cleaned up automatically.
 - Tectonic handles multi-pass automatically (no `pdflatex → bibtex → pdflatex` dance).
 - TeX bundle downloaded via HTTP Range Requests on first use — subsequent compiles are instant.
 - Binary assets (images, PDFs) are sent as base64 in the JSON bundle; text files (`.tex`, `.bib`) as plain strings.
