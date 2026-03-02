@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding      = "DB"
 database_name = "latex-worker-db"
-database_id  = "REPLACE_WITH_D1_DATABASE_ID"   # wrangler d1 create latex-worker-db
+database_id  = "39736be7-75f5-476c-a52b-edafb42cc71d"   # wrangler d1 create latex-worker-db
 
 # ── R2 bucket ─────────────────────────────────────────────────────────────────
 [[r2_buckets]]
