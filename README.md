@@ -297,33 +297,21 @@ npm --prefix cloudflare/ run db:migrate:remote   # apply D1 migrations
 npm --prefix cloudflare/ run deploy              # → https://latex-worker.<you>.workers.dev
 ```
 
-### Step 4 — Deploy the Frontend & Connect to Worker
+### Step 4 — Deploy the Frontend
 
-**Part A: Build and Deploy**
-
-The repo includes `frontend/functions/api/[[path]].ts` — a Pages Function that proxies every `/api/*` and WebSocket request to your Worker via an internal Service Binding (no CORS, auth headers preserved, zero extra latency). Wrangler picks it up automatically.
+The repo includes `frontend/functions/api/[[path]].ts` — a Pages Function that proxies every `/api/*` and WebSocket request to your Worker via an internal Service Binding (no CORS, auth headers preserved, zero extra latency). `frontend/wrangler.toml` configures the project name, compatibility flags, and the `LATEX_WORKER` service binding automatically — no manual dashboard steps needed.
 
 ```bash
 # 1. Build the React application
 npm --prefix frontend/ run build
 
-# 2. Deploy to Cloudflare Pages — run from frontend/ so wrangler finds functions/
+# 2. Deploy to Cloudflare Pages
 cd frontend
-npx wrangler pages deploy dist --project-name latex-worker-frontend
+npx wrangler pages deploy dist
 cd ..
 ```
 
 > `VITE_WORKER_URL` defaults to `""` (same origin) — no env var needed. Each user sets their own daemon URL; it cannot be configured globally.
-
-**Part B: Configure the Service Binding**
-
-After the first deploy, the Pages project exists in the dashboard. Tell Cloudflare what `LATEX_WORKER` refers to:
-
-1.  Go to your **Pages project → Settings → Functions → Service Bindings**.
-2.  Click **Add binding** and set:
-    *   **Variable name:** `LATEX_WORKER`
-    *   **Service:** Select your `latex-worker` from the dropdown.
-3.  Redeploy for the binding to take effect.
 
 
 ### Step 5 — Run the Daemon
